@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v1.3.0/docs/schemas/canister-yaml-schema.json
+
+# Local-only test token, NOT the real PIKO ledger -- same reasoning as
+# PikoPay's own test-ledger (see ~/pikopay/test-ledger/canister.yaml).
+# Never deployed to mainnet; pikopoker talks to the real PIKO ledger by
+# fixed canister id there instead (see pikopoker/src/main.mo).
+name: test-ledger
+recipe:
+  type: "@dfinity/prebuilt@v2.1.0"
+  configuration:
+    path: ic-icrc1-ledger.wasm
+    sha256: a273d741019b4324b22e2e64cfb0239de148ae9693e8801102a04118dfd383c0
+    compress: true
+init_args:
+  path: icrc1_ledger_init.args
+  format: candid

@@ -1,0 +1,133 @@
+:root {
+  color-scheme: light;
+
+  /* "Ledger paper" -- warm parchment, deep ink, gold leaf. */
+  --bg: #f2ede1;
+  --surface: #fbf8f0;
+  --surface-2: #eae2cf;
+  --border: #ddd2b3;
+  --border-strong: #c9b98a;
+
+  --text: #1a1508;
+  --text-secondary: #5c5340;
+  --text-muted: #8f8468;
+
+  --accent: #b1550f;
+  --accent-strong: #8a4310;
+  --accent-soft: #f5ddc4;
+  --accent-ink: #fffaf0;
+
+  --spark: #1a56b8;
+  --spark-soft: #dce7f7;
+
+  --good: #29713f;
+  --critical: #b0261c;
+
+  --rank-gold: #a8760f;
+  --rank-silver: #6b6558;
+  --rank-bronze: #9a5a28;
+
+  --mono-bg: #e9dfc4;
+  --mono-fg: #1a1508;
+
+  --bevel-hi: #fffdf7;
+  --bevel-lo: #a8975f;
+  --hard-shadow: rgba(26, 21, 8, 0.4);
+
+  /* Table felt -- the one deliberately un-parchment surface, standing in
+     for green baize. */
+  --felt: #2f6b46;
+  --felt-2: #275a3b;
+  --felt-rail: #6b4226;
+  --felt-line: rgba(255, 250, 240, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(26, 21, 8, 0.06);
+  --shadow-md: 0 10px 26px rgba(26, 21, 8, 0.08);
+  --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+
+  --font-display:
+    ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-display);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* "Terminal" -- near-black, molten orange, electric blue spark. */
+    --bg: #050403;
+    --surface: #0e0c09;
+    --surface-2: #17130f;
+    --border: #2a251d;
+    --border-strong: #3d3626;
+
+    --text: #f5efdf;
+    --text-secondary: #b3a98f;
+    --text-muted: #756c58;
+
+    --accent: #f2803a;
+    --accent-strong: #ffa156;
+    --accent-soft: #3a2410;
+    --accent-ink: #140d02;
+
+    --spark: #3d9bff;
+    --spark-soft: #12233d;
+
+    --good: #4fbf85;
+    --critical: #ff5c4d;
+
+    --rank-gold: #ffd35c;
+    --rank-silver: #c9c9c9;
+    --rank-bronze: #d99a5b;
+
+    --mono-bg: #120f0a;
+    --mono-fg: #f5efdf;
+
+    --bevel-hi: #56492c;
+    --bevel-lo: #000000;
+    --hard-shadow: rgba(0, 0, 0, 0.6);
+
+    --felt: #123821;
+    --felt-2: #0d2c19;
+    --felt-rail: #241a10;
+    --felt-line: rgba(255, 250, 240, 0.1);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 16px 34px rgba(0, 0, 0, 0.5);
+    --glow-accent: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 26px 26px;
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
