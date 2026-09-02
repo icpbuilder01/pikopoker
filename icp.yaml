@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v1.3.0/docs/schemas/icp-yaml-schema.json
+
+# PikoPoker -- an independent project, same reasoning as PikoPay (see
+# ~/pikopay/icp.yaml): not part of piko-icp's own deploy/canister
+# lifecycle. `pikopoker` talks to the real PIKO ledger on mainnet by fixed
+# canister id, redirectable to `test-ledger` for local development only
+# (see pikopoker/src/main.mo's setPikoLedgerId / scripts/deploy-local.sh).
+canisters:
+  - test-ledger
+  - pikopoker
+  - pikopoker-frontend
+
+# Ports 8000, 8010, 8020 are already used by other local icp-cli projects
+# on this machine; use a distinct port for PikoPoker's local network.
+networks:
+  - name: local
+    mode: managed
+    gateway:
+      port: 8030

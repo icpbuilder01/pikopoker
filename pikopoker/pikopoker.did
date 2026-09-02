@@ -1,0 +1,186 @@
+type TransferResult = 
+ variant {
+   Err: TransferError;
+   Ok: nat;
+ };
+type TransferFromError = 
+ variant {
+   BadBurn: record {min_burn_amount: nat;};
+   BadFee: record {expected_fee: nat;};
+   CreatedInFuture: record {ledger_time: nat64;};
+   Duplicate: record {duplicate_of: nat;};
+   GenericError: record {
+                   error_code: nat;
+                   message: text;
+                 };
+   InsufficientAllowance: record {allowance: nat;};
+   InsufficientFunds: record {balance: nat;};
+   TemporarilyUnavailable;
+   TooOld;
+ };
+type TransferError = 
+ variant {
+   BadBurn: record {min_burn_amount: nat;};
+   BadFee: record {expected_fee: nat;};
+   CreatedInFuture: record {ledger_time: nat64;};
+   Duplicate: record {duplicate_of: nat;};
+   GenericError: record {
+                   error_code: nat;
+                   message: text;
+                 };
+   InsufficientFunds: record {balance: nat;};
+   TemporarilyUnavailable;
+   TooOld;
+ };
+type TableView = 
+ record {
+   actingSeat: opt nat;
+   actionDeadline: opt int;
+   bigBlind: nat;
+   board: vec nat8;
+   buyIn: nat;
+   currentBet: nat;
+   dealerSeat: nat;
+   handNumber: nat;
+   id: nat;
+   kind: TableKind;
+   lastResult: opt text;
+   minRaiseTo: nat;
+   name: text;
+   phase: Phase;
+   pots: vec Pot;
+   seats: vec SeatView;
+   smallBlind: nat;
+ };
+type TableSummary = 
+ record {
+   bigBlind: nat;
+   buyIn: nat;
+   id: nat;
+   kind: TableKind;
+   name: text;
+   phase: Phase;
+   seatsTaken: nat;
+   smallBlind: nat;
+ };
+type TableKind = 
+ variant {
+   Private: record {code: text;};
+   Public;
+ };
+type SeatView = 
+ record {
+   committedThisHand: nat;
+   committedThisRound: nat;
+   hasFolded: bool;
+   holeCards: opt record {
+                    nat8;
+                    nat8;
+                  };
+   inHand: bool;
+   isAllIn: bool;
+   occupant: opt principal;
+   sittingOut: bool;
+   stack: nat;
+ };
+type Pot = 
+ record {
+   amount: nat;
+   eligibleSeats: vec nat;
+ };
+type Phase = 
+ variant {
+   Flop;
+   PreFlop;
+   River;
+   Showdown;
+   Turn;
+   WaitingForPlayers;
+ };
+type LeaveError = 
+ variant {
+   NotSeated;
+   StillInHand;
+   TransferFailed;
+ };
+type JoinError = 
+ variant {
+   AlreadySeatedAtTable;
+   Anonymous;
+   SeatOutOfRange;
+   SeatTaken;
+   TableNotFound;
+   TransferFailed: TransferFromError;
+   WrongBuyInAmount;
+ };
+type CreatePrivateError = 
+ variant {
+   Anonymous;
+   InvalidBuyIn;
+   InvalidName;
+ };
+type ActionError = 
+ variant {
+   IllegalAction: text;
+   NoHandInProgress;
+   NotSeated;
+   NotYourTurn;
+ };
+service : {
+  betOrRaiseTo: (tableId: nat, toAmount: nat) ->
+   (variant {
+      Err: ActionError;
+      Ok;
+    });
+  cancelPendingRakeWithdrawal: () -> ();
+  checkOrCall: (tableId: nat) -> (variant {
+                                    Err: ActionError;
+                                    Ok;
+                                  });
+  claimPendingPayout: () -> (TransferResult);
+  createPrivateTable: (name: text, buyIn: nat) ->
+   (variant {
+      Err: CreatePrivateError;
+      Ok: record {
+            code: text;
+            id: nat;
+          };
+    });
+  executeRakeWithdrawal: () -> (TransferResult);
+  fold: (tableId: nat) -> (variant {
+                             Err: ActionError;
+                             Ok;
+                           });
+  getLobby: () -> (vec TableSummary) query;
+  getMyPrivateTables: () -> (vec TableSummary) query;
+  getRakeBalance: () -> (nat) query;
+  getTableView: (tableId: nat) -> (opt TableView) query;
+  joinPrivateTable: (code: text, seatIndex: nat) ->
+   (variant {
+      Err: JoinError;
+      Ok;
+    });
+  joinPublicTable: (tableId: nat, seatIndex: nat) ->
+   (variant {
+      Err: JoinError;
+      Ok;
+    });
+  leaveTable: (tableId: nat) -> (variant {
+                                   Err: LeaveError;
+                                   Ok: nat;
+                                 });
+  lockPikoLedgerId: () -> ();
+  lockRakeWithdrawals: () -> ();
+  proposeRakeWithdrawal: (to: principal, amount: nat) -> ();
+  setPikoLedgerId: (id: principal) -> ();
+  setRakeBps: (bps: nat) -> ();
+  sitOut: (tableId: nat, sittingOut: bool) ->
+   (variant {
+      Err: ActionError;
+      Ok;
+    });
+  topUpStack: (tableId: nat, amount: nat) -> (variant {
+                                                Err: JoinError;
+                                                Ok;
+                                              });
+}

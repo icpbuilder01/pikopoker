@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://github.com/dfinity/icp-cli/raw/refs/tags/v1.3.0/docs/schemas/canister-yaml-schema.json
+
+name: pikopoker-frontend
+
+recipe:
+  # https://github.com/dfinity/icp-cli-recipes/blob/main/recipes/static-site/README.md
+  type: "@dfinity/static-site@v0.3.3"
+  configuration:
+    build:
+      - npm install
+      - npm run build
+    dir: dist
