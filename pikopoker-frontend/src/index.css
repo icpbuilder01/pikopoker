@@ -39,7 +39,19 @@
   --felt: #2f6b46;
   --felt-2: #275a3b;
   --felt-rail: #6b4226;
+  --felt-rail-hi: #9c6a3e;
+  --felt-rail-lo: #3c2412;
+  --felt-trim: #d8ad4c;
   --felt-line: rgba(255, 250, 240, 0.14);
+
+  /* Card backs -- classic red Bicycle-style, deliberately not brand-tinted
+     so opponents' hidden cards read as "a normal deck", not a PIKO logo. */
+  --card-back: #7a1620;
+  --card-back-2: #591019;
+
+  /* The floating "BET n" pill shown between a seat and the pot. */
+  --bet-pill: #6a4b8f;
+  --bet-pill-ink: #f5efff;
 
   --shadow-sm: 0 1px 2px rgba(26, 21, 8, 0.06);
   --shadow-md: 0 10px 26px rgba(26, 21, 8, 0.08);
@@ -92,7 +104,16 @@
     --felt: #123821;
     --felt-2: #0d2c19;
     --felt-rail: #241a10;
+    --felt-rail-hi: #7a5230;
+    --felt-rail-lo: #140c06;
+    --felt-trim: #e8c368;
     --felt-line: rgba(255, 250, 240, 0.1);
+
+    --card-back: #8a1c28;
+    --card-back-2: #52101a;
+
+    --bet-pill: #7c5aa8;
+    --bet-pill-ink: #f5efff;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 16px 34px rgba(0, 0, 0, 0.5);

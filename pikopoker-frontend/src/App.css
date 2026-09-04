@@ -462,11 +462,13 @@ section.block > *:last-child {
 }
 
 .playing-card.face-down {
-  background: linear-gradient(160deg, var(--accent-strong) 0%, var(--accent) 100%);
-  border-top-color: var(--bevel-lo);
-  border-left-color: var(--bevel-lo);
-  border-bottom-color: var(--bevel-hi);
-  border-right-color: var(--bevel-hi);
+  /* Classic red Bicycle-style back -- deliberately not brand-tinted, so an
+     opponent's hidden hole cards read as "a normal deck" at a glance. */
+  background: linear-gradient(160deg, var(--card-back) 0%, var(--card-back-2) 100%);
+  border-top-color: rgba(0, 0, 0, 0.35);
+  border-left-color: rgba(0, 0, 0, 0.35);
+  border-bottom-color: rgba(255, 255, 255, 0.25);
+  border-right-color: rgba(255, 255, 255, 0.25);
   overflow: hidden;
 }
 
@@ -689,18 +691,32 @@ section.block > *:last-child {
   margin: 8px 0 20px;
 }
 
-.felt {
+/* The wood rail: a separate element behind .felt (not a border on it) so it
+   can carry its own gradient + shadow without border-image's border-radius
+   quirks. .felt then insets inside it, leaving the rail visible as a ring. */
+.felt-wrap::before {
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: 50%;
+  background: linear-gradient(155deg, var(--felt-rail-hi) 0%, var(--felt-rail-lo) 55%, var(--felt-rail-hi) 100%);
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.18),
+    inset 0 -10px 22px rgba(0, 0, 0, 0.45),
+    0 14px 34px rgba(0, 0, 0, 0.45);
+}
+
+.felt {
+  position: absolute;
+  inset: 15px;
+  border-radius: 50%;
   background:
     radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--felt) 70%, #fff 8%) 0%, var(--felt) 45%, var(--felt-2) 100%);
-  border: 10px solid var(--felt-rail);
+  border: 5px solid var(--felt-trim);
   box-shadow:
-    inset 0 0 0 3px var(--felt-line),
-    inset 0 0 0 9px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 3px rgba(0, 0, 0, 0.28),
     inset 0 20px 70px rgba(0, 0, 0, 0.35),
-    0 12px 30px rgba(0, 0, 0, 0.35);
+    inset 0 -10px 40px rgba(0, 0, 0, 0.25);
 }
 
 .felt::before {
@@ -782,37 +798,28 @@ section.block > *:last-child {
 .seat-slot {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: clamp(78px, 17vw, 148px);
+  width: clamp(64px, 15vw, 112px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
   z-index: 2;
 }
 
+/* Occupied seats are no longer a bordered box -- just a stack of round
+   badges floating on the rail, matching a standard mobile-poker look. */
 .seat-card {
   position: relative;
   width: 100%;
-  background: var(--surface);
-  border-style: solid;
-  border-width: 2px;
-  border-top-color: var(--bevel-hi);
-  border-left-color: var(--bevel-hi);
-  border-bottom-color: var(--bevel-lo);
-  border-right-color: var(--bevel-lo);
-  box-shadow: 2px 2px 0 var(--hard-shadow);
-  padding: 8px 8px 6px;
-  text-align: center;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
-.seat-card.acting {
-  outline: 2px solid var(--spark);
-  outline-offset: 2px;
+.seat-card.acting .seat-avatar {
   box-shadow:
-    0 0 0 4px var(--spark-soft),
-    0 0 14px 2px color-mix(in srgb, var(--spark) 55%, transparent),
-    2px 2px 0 var(--hard-shadow);
+    0 0 0 3px var(--spark),
+    0 0 16px 3px color-mix(in srgb, var(--spark) 60%, transparent);
   animation: seat-acting-pulse 1.6s ease-in-out infinite;
 }
 
@@ -820,51 +827,51 @@ section.block > *:last-child {
   0%,
   100% {
     box-shadow:
-      0 0 0 4px var(--spark-soft),
-      0 0 14px 2px color-mix(in srgb, var(--spark) 55%, transparent),
-      2px 2px 0 var(--hard-shadow);
+      0 0 0 3px var(--spark),
+      0 0 16px 3px color-mix(in srgb, var(--spark) 60%, transparent);
   }
   50% {
     box-shadow:
-      0 0 0 4px var(--spark-soft),
-      0 0 22px 6px color-mix(in srgb, var(--spark) 65%, transparent),
-      2px 2px 0 var(--hard-shadow);
+      0 0 0 3px var(--spark),
+      0 0 24px 7px color-mix(in srgb, var(--spark) 70%, transparent);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .seat-card.acting {
+  .seat-card.acting .seat-avatar {
     animation: none;
   }
 }
 
 .dealer-button {
   position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 22px;
-  height: 22px;
+  top: -2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-display);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   font-weight: 700;
   color: #1a1508;
   background: radial-gradient(circle at 35% 30%, #fff6da, var(--rank-gold) 70%);
-  border: 2px solid var(--bevel-lo);
-  box-shadow: 1px 1px 0 var(--hard-shadow);
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   z-index: 3;
 }
 
 .seat-timer-track {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: -4px;
+  left: 4px;
+  right: 4px;
   height: 3px;
-  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.3);
+  overflow: hidden;
 }
 
 .seat-timer-bar {
@@ -875,67 +882,89 @@ section.block > *:last-child {
 
 .seat-identity {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
+  gap: 0;
   min-width: 0;
+  max-width: 100%;
 }
 
 .seat-avatar {
+  position: relative;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: clamp(34px, 8vw, 48px);
+  height: clamp(34px, 8vw, 48px);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.5rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: #fffaf0;
-  border: 1px solid rgba(0, 0, 0, 0.3);
+  border: 2.5px solid rgba(255, 250, 240, 0.85);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
 }
 
 .seat-card.folded {
   opacity: 0.45;
 }
 
-.seat-card.me {
-  border-top-color: var(--accent);
-  border-left-color: var(--accent);
+.seat-card.me .seat-avatar {
+  border-color: var(--rank-gold);
 }
 
 .seat-card.empty {
-  background: rgba(255, 255, 255, 0.06);
-  border-style: dashed;
-  box-shadow: none;
-  padding: 10px 8px;
+  gap: 2px;
+}
+
+.seat-card.empty .seat-avatar-slot {
+  width: clamp(34px, 8vw, 48px);
+  height: clamp(34px, 8vw, 48px);
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 250, 240, 0.4);
+  background: rgba(0, 0, 0, 0.15);
 }
 
 .seat-empty-label {
-  font-size: 0.68rem;
-  color: var(--text-muted);
+  font-size: 0.62rem;
+  color: #f5efdf;
+  opacity: 0.75;
   display: block;
-  margin-bottom: 4px;
+  margin-top: 3px;
+}
+
+.seat-namepill {
+  margin-top: -6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 3px 9px 4px;
+  border-radius: 999px;
+  background: rgba(10, 8, 4, 0.62);
+  backdrop-filter: blur(2px);
+  max-width: 100%;
 }
 
 .seat-name {
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  color: var(--text);
+  color: #fdf9ee;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .seat-stack {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  color: var(--text-secondary);
+  color: var(--rank-gold);
 }
 
 .seat-cards {
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .seat-tags {
@@ -947,11 +976,12 @@ section.block > *:last-child {
 }
 
 .seat-tag {
-  font-size: 0.58rem;
+  font-size: 0.56rem;
   font-weight: 700;
-  padding: 1px 5px;
-  background: var(--surface-2);
-  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(10, 8, 4, 0.55);
+  color: #f5efdf;
 }
 
 .seat-tag.allin {
@@ -960,22 +990,25 @@ section.block > *:last-child {
 }
 
 .seat-tag.you {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--rank-gold);
+  color: #1a1508;
 }
 
+/* The floating "bet" pill -- nudged toward the pot via an inline transform
+   (see TableRoom's seatPosition dirX/dirY) so bets visually drift inward. */
 .chip-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 700;
-  color: #fffaf0;
-  background: rgba(0, 0, 0, 0.45);
-  padding: 2px 7px 2px 4px;
-  border-radius: 8px;
-  margin-top: 4px;
+  color: var(--bet-pill-ink);
+  background: var(--bet-pill);
+  padding: 3px 8px 3px 5px;
+  border-radius: 999px;
+  margin-top: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .chip-dot {

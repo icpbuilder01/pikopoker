@@ -27,13 +27,20 @@ const ACTION_TIMEOUT_SECONDS = 30;
 // clockwise, matching the seat ordering the backend deals in. Kept inset
 // from the true 50% radius (rx/ry below) so a seat card's own width/height
 // doesn't push it past the felt-wrap edge on narrow (mobile) viewports.
-function seatPosition(index: number, total: number): { top: string; left: string } {
+function seatPosition(
+  index: number,
+  total: number,
+): { top: string; left: string; dirX: number; dirY: number } {
   const angle = (2 * Math.PI * index) / total - Math.PI;
   const rx = 44;
   const ry = 40;
   const left = 50 + rx * Math.cos(angle);
   const top = 50 + ry * Math.sin(angle);
-  return { top: `${top}%`, left: `${left}%` };
+  // Unit vector pointing from this seat back toward the felt's center --
+  // used to nudge the bet pill inward, toward the pot, like a real table.
+  const dirX = -Math.cos(angle);
+  const dirY = -Math.sin(angle);
+  return { top: `${top}%`, left: `${left}%`, dirX, dirY };
 }
 
 const pikopokerPrincipal = Principal.fromText(pikopokerCanisterId);
@@ -477,22 +484,26 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               {view.lastResult && <span className="felt-result">{view.lastResult}</span>}
             </div>
 
-            {view.seats.map((seat, i) => (
-              <div className="seat-slot" style={seatPosition(i, view.seats.length)} key={i}>
-                <SeatCard
-                  seat={seat}
-                  seatIndex={i}
-                  isDealer={Number(view.dealerSeat) === i}
-                  isActing={view.actingSeat !== undefined && Number(view.actingSeat) === i}
-                  isMe={myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText}
-                  joining={joiningSeat === i}
-                  canJoin={mySeatIndex === -1 && joiningSeat === null}
-                  timerProgress={timerProgress}
-                  unit={unit}
-                  onJoin={() => handleJoinSeat(i)}
-                />
-              </div>
-            ))}
+            {view.seats.map((seat, i) => {
+              const pos = seatPosition(i, view.seats.length);
+              return (
+                <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
+                  <SeatCard
+                    seat={seat}
+                    seatIndex={i}
+                    isDealer={Number(view.dealerSeat) === i}
+                    isActing={view.actingSeat !== undefined && Number(view.actingSeat) === i}
+                    isMe={myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText}
+                    joining={joiningSeat === i}
+                    canJoin={mySeatIndex === -1 && joiningSeat === null}
+                    timerProgress={timerProgress}
+                    unit={unit}
+                    betDir={{ x: pos.dirX, y: pos.dirY }}
+                    onJoin={() => handleJoinSeat(i)}
+                  />
+                </div>
+              );
+            })}
           </div>
 
           {mySeat && (
