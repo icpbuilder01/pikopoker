@@ -625,7 +625,15 @@ actor self {
     var idx = (from + 1) % t.seats.size();
     while (i < t.seats.size()) {
       let s = t.seats[idx];
-      let ok = s.occupant != null and (not activeOnly or (not s.sittingOut and not s.hasFolded and not s.isAllIn));
+      // Deliberately checks `inHand`, not `sittingOut`, for whether this
+      // seat should get a turn: `inHand` is fixed for the whole hand at
+      // deal time (already reflects sittingOut as of that moment), while
+      // `sittingOut` can be toggled by the player mid-hand (see sitOut())
+      // -- gating turn rotation on the live sittingOut value meant a
+      // player who sat out mid-hand permanently lost its own turn for the
+      // rest of that hand (found 2026-09-05, same underlying mistake as
+      // the leave-queue bug above, just via a different caller).
+      let ok = s.occupant != null and (not activeOnly or (s.inHand and not s.hasFolded and not s.isAllIn));
       if (ok) { return ?idx };
       idx := (idx + 1) % t.seats.size();
       i += 1;
