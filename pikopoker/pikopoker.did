@@ -127,6 +127,7 @@ type ActionError =
    NotYourTurn;
  };
 service : {
+  adminRemoveEmptyTable: (tableId: nat) -> ();
   betOrRaiseTo: (tableId: nat, toAmount: nat) ->
    (variant {
       Err: ActionError;
