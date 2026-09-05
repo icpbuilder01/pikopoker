@@ -1070,6 +1070,39 @@ section.block > *:last-child {
   flex-wrap: wrap;
 }
 
+.leave-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--critical);
+}
+
+.leave-pending-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--critical);
+  animation: leave-pending-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes leave-pending-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leave-pending-dot {
+    animation: none;
+  }
+}
+
 .action-bar {
   display: flex;
   flex-wrap: wrap;

@@ -98,6 +98,16 @@ actor self {
   // first await so a burst of concurrent calls from one principal can't
   // interleave across the icrc2_transfer_from await.
   let pendingFundsActions : Map.Map<Principal, Bool> = Map.empty<Principal, Bool>();
+  // Seats that asked to leave while still un-folded in a live hand (can't
+  // safely vacate mid-hand -- showdown logic needs the seat). Queued here
+  // instead of erroring: auto-folded the instant it's their turn (see
+  // setActing) and actually vacated + cashed out once the hand fully ends
+  // (see tick()'s Showdown -> WaitingForPlayers reset). Keyed by table id
+  // + principal since the same principal could be queued at several tables.
+  let pendingLeaves : Map.Map<Text, Bool> = Map.empty<Text, Bool>();
+  func leaveKey(tableId : Nat, p : Principal) : Text {
+    Nat.toText(tableId) # "#" # Principal.toText(p);
+  };
   // A failed payout (cash-out or, in principle, a refund) is recorded here
   // rather than silently lost -- retryable via claimPendingPayout, same
   // pattern mother/dice already use for a failed transfer after funds
@@ -424,7 +434,11 @@ actor self {
     null;
   };
 
-  public shared ({ caller }) func leaveTable(tableId : Nat) : async { #Ok : Nat; #Err : Types.LeaveError } {
+  public shared ({ caller }) func leaveTable(tableId : Nat) : async {
+    #Ok : Nat;
+    #Queued;
+    #Err : Types.LeaveError;
+  } {
     let t = switch (Map.get(tables, Nat.compare, tableId)) {
       case (?t) { t };
       case null { return #Err(#NotSeated) };
@@ -434,8 +448,39 @@ actor self {
       case null { return #Err(#NotSeated) };
     };
     let seat = t.seats[seatIndex];
-    if (seat.inHand and not seat.hasFolded) { return #Err(#StillInHand) };
+    if (seat.inHand and not seat.hasFolded) {
+      // Can't safely vacate a seat still contesting the pot -- queue it
+      // instead of hard-erroring. Deliberately does NOT touch sittingOut:
+      // that flag also gates nextOccupiedFrom's turn rotation (activeOnly),
+      // so setting it here would skip this seat's turn entirely and the
+      // setActing auto-fold hook below would never get a chance to fire.
+      // The seat is instead kept off the *next* deal by actually being
+      // vacated (see finalizeQueuedLeaves) before that next deal happens.
+      Map.add(pendingLeaves, Text.compare, leaveKey(tableId, caller), true);
+      return #Queued;
+    };
+    await* doLeave(t, seatIndex, caller);
+  };
 
+  public shared ({ caller }) func cancelLeaveRequest(tableId : Nat) : async { #Ok; #Err : Types.LeaveError } {
+    let t = switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { t };
+      case null { return #Err(#NotSeated) };
+    };
+    switch (findSeat(t, caller)) {
+      case (?_) {};
+      case null { return #Err(#NotSeated) };
+    };
+    Map.remove(pendingLeaves, Text.compare, leaveKey(tableId, caller));
+    #Ok;
+  };
+
+  func doLeave(t : Types.Table, seatIndex : Nat, caller : Principal) : async* {
+    #Ok : Nat;
+    #Queued;
+    #Err : Types.LeaveError;
+  } {
+    let seat = t.seats[seatIndex];
     if (t.buyIn == 0) {
       // Play-money table -- nothing real to cash out; leaving and
       // rejoining is the designed way to reset to a fresh FREE_CHIPS stack.
@@ -461,6 +506,26 @@ actor self {
     };
     Map.remove(pendingFundsActions, Principal.compare, caller);
     #Ok(payout);
+  };
+
+  // Runs at the natural end of a hand (see tick()'s Showdown reset) --
+  // finalizes any leave requests queued mid-hand: actually vacates the
+  // seat and cashes out, now that it's safe to do so.
+  func finalizeQueuedLeaves(t : Types.Table) : async* () {
+    var i = 0;
+    while (i < t.seats.size()) {
+      switch (t.seats[i].occupant) {
+        case (?p) {
+          let key = leaveKey(t.id, p);
+          if (Map.get(pendingLeaves, Text.compare, key) != null) {
+            Map.remove(pendingLeaves, Text.compare, key);
+            ignore (await* doLeave(t, i, p));
+          };
+        };
+        case null {};
+      };
+      i += 1;
+    };
   };
 
   public shared ({ caller }) func topUpStack(tableId : Nat, amount : Nat) : async {
@@ -657,6 +722,26 @@ actor self {
   };
 
   func setActing(t : Types.Table, seatIndex : ?Nat) {
+    switch (seatIndex) {
+      case (?i) {
+        switch (t.seats[i].occupant) {
+          case (?p) {
+            if (Map.get(pendingLeaves, Text.compare, leaveKey(t.id, p)) != null) {
+              // Asked to leave mid-hand -- don't make it sit through a
+              // full turn just to fold; auto-fold the instant it's its
+              // turn, same as tick()'s AFK-timeout path below.
+              t.seats[i].hasFolded := true;
+              t.actingSeat := null;
+              t.actionDeadline := null;
+              advanceAfterAction(t, i);
+              return;
+            };
+          };
+          case null {};
+        };
+      };
+      case null {};
+    };
     t.actingSeat := seatIndex;
     t.actionDeadline := switch (seatIndex) {
       case (?_) { ?(Time.now() + ACTION_TIMEOUT_NANOS) };
@@ -938,6 +1023,7 @@ actor self {
                 };
                 t.phase := #WaitingForPlayers;
                 t.nextHandAt := null;
+                await* finalizeQueuedLeaves(t);
               };
             };
             case null {};

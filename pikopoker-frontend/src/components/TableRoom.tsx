@@ -93,8 +93,10 @@ function leaveErrorMessage(err: LeaveError): string {
   switch (err) {
     case LeaveError.NotSeated:
       return "You're not seated here.";
+    // StillInHand is no longer returned by the backend -- leaveTable now
+    // queues instead (see the #Queued branch in handleLeave).
     case LeaveError.StillInHand:
-      return "You're still in this hand -- fold or wait for it to finish before leaving.";
+      return "Couldn't leave.";
     case LeaveError.TransferFailed:
       return "Cash-out transfer failed -- your chips are safe, try leaving again in a moment.";
     default:
@@ -130,6 +132,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   const [copied, setCopied] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [confettiTrigger, setConfettiTrigger] = useState(0);
+  const [leavePending, setLeavePending] = useState(false);
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
@@ -184,6 +187,10 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
     ? view.seats.findIndex((s) => myPrincipalText !== null && s.occupant?.toText() === myPrincipalText)
     : -1;
   const mySeat = view && mySeatIndex >= 0 ? view.seats[mySeatIndex] : null;
+  // Derived, not synchronized via effect: once the seat is actually vacant
+  // (leave finalized, or this is simply a fresh seat) there's nothing
+  // pending to show, regardless of stale local state from an earlier visit.
+  const showLeavePending = leavePending && mySeat !== null;
   const isMyTurn =
     view !== null &&
     mySeatIndex >= 0 &&
@@ -238,6 +245,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       if (joinResult.__kind__ === "Err") {
         setActionError(joinErrorMessage(joinResult.Err));
       } else {
+        setLeavePending(false);
         await refresh();
       }
     } catch (err) {
@@ -256,12 +264,39 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       const result = await getPikopokerActor(identity).leaveTable(tableId);
       if (result.__kind__ === "Err") {
         setActionError(leaveErrorMessage(result.Err));
+      } else if (result.__kind__ === "Queued") {
+        // Still contesting the pot -- the backend will auto-fold this seat
+        // the instant it's its turn, then actually vacate it once the hand
+        // ends (a few seconds after), no further action needed here.
+        setLeavePending(true);
+        await refresh();
       } else {
+        setLeavePending(false);
         await refresh();
       }
     } catch (err) {
       console.error("Leave failed", err);
       setActionError("Leave failed -- try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCancelLeave() {
+    if (!identity) return;
+    setActionError(null);
+    setBusy(true);
+    try {
+      const result = await getPikopokerActor(identity).cancelLeaveRequest(tableId);
+      if (result.__kind__ === "Err") {
+        setActionError(leaveErrorMessage(result.Err));
+      } else {
+        setLeavePending(false);
+        await refresh();
+      }
+    } catch (err) {
+      console.error("Cancel leave failed", err);
+      setActionError("Couldn't cancel -- try again.");
     } finally {
       setBusy(false);
     }
@@ -524,9 +559,19 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                     Top up
                   </button>
                 )}
-                <button className="button danger small" disabled={busy} onClick={handleLeave}>
-                  {isFree ? "Leave (new chips next time)" : "Leave table"}
-                </button>
+                {showLeavePending ? (
+                  <span className="leave-pending">
+                    <span className="leave-pending-dot" />
+                    Leaving after this hand...
+                    <button className="button secondary small" disabled={busy} onClick={handleCancelLeave}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button className="button danger small" disabled={busy} onClick={handleLeave}>
+                    {isFree ? "Leave (new chips next time)" : "Leave table"}
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -132,6 +132,10 @@ service : {
       Err: ActionError;
       Ok;
     });
+  cancelLeaveRequest: (tableId: nat) -> (variant {
+                                           Err: LeaveError;
+                                           Ok;
+                                         });
   cancelPendingRakeWithdrawal: () -> ();
   checkOrCall: (tableId: nat) -> (variant {
                                     Err: ActionError;
@@ -168,6 +172,7 @@ service : {
   leaveTable: (tableId: nat) -> (variant {
                                    Err: LeaveError;
                                    Ok: nat;
+                                   Queued;
                                  });
   lockPikoLedgerId: () -> ();
   lockRakeWithdrawals: () -> ();
