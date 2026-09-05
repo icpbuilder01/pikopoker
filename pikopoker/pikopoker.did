@@ -127,6 +127,12 @@ type ActionError =
    NotYourTurn;
  };
 service : {
+  adminKickSeat: (tableId: nat, seatIndex: nat) ->
+   (variant {
+      Err: LeaveError;
+      Ok: nat;
+      Queued;
+    });
   adminRemoveEmptyTable: (tableId: nat) -> ();
   betOrRaiseTo: (tableId: nat, toAmount: nat) ->
    (variant {
