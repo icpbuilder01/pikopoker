@@ -173,12 +173,20 @@ actor self {
     Map.add(tables, Nat.compare, id, newTable(id, name, #Public, 0, sb, bb));
   };
 
-  // Seeded once at first install (persistent thereafter under enhanced
-  // orthogonal persistence, an upgrade never re-runs this).
-  createPublicTable("Micro", 10_000_000_000); // 100 PIKO buy-in, 0.5/1 blinds
-  createPublicTable("Low", 100_000_000_000); // 1,000 PIKO buy-in, 5/10 blinds
-  createPublicTable("High", 1_000_000_000_000); // 10,000 PIKO buy-in, 50/100 blinds
-  createFreeTable("Free Play"); // no real PIKO, 1,000 complimentary chips per sit-down
+  // Seeded once at first install. NOTE: unlike a stable var's own
+  // initializer (which enhanced orthogonal persistence correctly skips
+  // re-running on upgrade), a bare top-level statement like these calls is
+  // NOT skipped -- it re-executes on every single upgrade regardless of
+  // persisted state, appending 4 duplicate tables each time. Learned this
+  // the hard way on 2026-09-05: a routine backend upgrade silently doubled
+  // the mainnet lobby to 8 tables. Guarded on `Map.size(tables) == 0` so
+  // it only ever actually seeds on a genuine first install.
+  if (Map.size(tables) == 0) {
+    createPublicTable("Micro", 10_000_000_000); // 100 PIKO buy-in, 0.5/1 blinds
+    createPublicTable("Low", 100_000_000_000); // 1,000 PIKO buy-in, 5/10 blinds
+    createPublicTable("High", 1_000_000_000_000); // 10,000 PIKO buy-in, 50/100 blinds
+    createFreeTable("Free Play"); // no real PIKO, 1,000 complimentary chips per sit-down
+  };
 
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
 
@@ -1115,5 +1123,21 @@ actor self {
     requireController(caller);
     if (bps > 500) { Runtime.trap("rake capped at 5% by this function itself") };
     rakeBps := bps;
+  };
+
+  // One-off cleanup tool for the 2026-09-05 duplicate-table bug (see the
+  // seeding guard above) -- traps rather than silently no-op'ing if the
+  // table isn't actually empty, so it can never be used to disappear a
+  // table with real funds or players still on it.
+  public shared ({ caller }) func adminRemoveEmptyTable(tableId : Nat) : async () {
+    requireController(caller);
+    let t = switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { t };
+      case null { return };
+    };
+    for (s in t.seats.vals()) {
+      if (s.occupant != null) { Runtime.trap("table has an occupied seat") };
+    };
+    Map.remove(tables, Nat.compare, tableId);
   };
 }
