@@ -1140,4 +1140,42 @@ actor self {
     };
     Map.remove(tables, Nat.compare, tableId);
   };
+
+  // Admin override to force a stuck/misbehaving seat out, bypassing the
+  // normal inHand/hasFolded guard entirely -- reuses doLeave so a real
+  // buyIn table still cashes the occupant out correctly, not just Free
+  // Play's instant-clear path. Also clears any stale pendingLeaves entry
+  // for that seat while at it.
+  public shared ({ caller }) func adminKickSeat(tableId : Nat, seatIndex : Nat) : async {
+    #Ok : Nat;
+    #Queued;
+    #Err : Types.LeaveError;
+  } {
+    requireController(caller);
+    let t = switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { t };
+      case null { return #Err(#NotSeated) };
+    };
+    let seat = t.seats[seatIndex];
+    let occupant = switch (seat.occupant) {
+      case (?p) { p };
+      case null { return #Err(#NotSeated) };
+    };
+    Map.remove(pendingLeaves, Text.compare, leaveKey(tableId, occupant));
+    let result = await* doLeave(t, seatIndex, occupant);
+    // doLeave alone doesn't reset hand-progress fields -- normally
+    // unreachable since leaveTable's own guard only ever calls it once
+    // inHand is already false or hasFolded is already true. This admin
+    // override bypasses that guard entirely (that's the point -- it's for
+    // a stuck/misbehaving seat), so clean them explicitly too, or the
+    // vacated seat could linger as a phantom "live" contestant (null
+    // occupant, still inHand) in liveSeats/computePots.
+    seat.hasFolded := false;
+    seat.isAllIn := false;
+    seat.inHand := false;
+    seat.holeCards := null;
+    seat.committedThisRound := 0;
+    seat.committedThisHand := 0;
+    result;
+  };
 }
