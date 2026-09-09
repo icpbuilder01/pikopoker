@@ -127,6 +127,7 @@ type ActionError =
    NotYourTurn;
  };
 service : {
+  adminClearPendingFunds: (target: principal) -> ();
   adminForceDealNextHand: (tableId: nat) -> ();
   adminKickSeat: (tableId: nat, seatIndex: nat) ->
    (variant {
