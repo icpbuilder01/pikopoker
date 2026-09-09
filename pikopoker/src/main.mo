@@ -665,6 +665,26 @@ actor self {
     if (active.size() < 2) { return };
     if (t.phase != #WaitingForPlayers) { return };
 
+    // Fetch entropy BEFORE mutating any seat/table state -- this is the
+    // only await in this function, and a canister message can be
+    // interleaved with other calls (or the tick timer's next firing) while
+    // it's outstanding. Used to reset inHand/handNumber/board first and
+    // bail out on failure: if raw_rand ever traps or is rejected (rare, but
+    // seen for real under a cycles crunch -- see PikoPoker's own incident
+    // notes), that left every seat stuck at inHand=true forever with a
+    // stale lastResult and a bumped handNumber but no hand actually dealt,
+    // since nothing ever reset those fields afterward (dealNextHand's own
+    // <2-active guard above keeps re-triggering the same early return, and
+    // the Showdown-only cleanup in tick() never runs because phase never
+    // left WaitingForPlayers). Symptom: leaveTable stuck queuing forever
+    // ("Leaving after this hand...") since it trusts seat.inHand.
+    let Management : Types.ManagementActor = actor ("aaaaa-aa");
+    let entropy = try { await Management.raw_rand() } catch (_e) {
+      // Couldn't get randomness -- stay in WaitingForPlayers and try again
+      // on the next timer tick rather than dealing with a weak fallback.
+      return;
+    };
+
     for (s in t.seats.vals()) {
       s.holeCards := null;
       s.committedThisRound := 0;
@@ -676,12 +696,6 @@ actor self {
     t.board := [];
     t.handNumber += 1;
 
-    let Management : Types.ManagementActor = actor ("aaaaa-aa");
-    let entropy = try { await Management.raw_rand() } catch (_e) {
-      // Couldn't get randomness -- stay in WaitingForPlayers and try again
-      // on the next timer tick rather than dealing with a weak fallback.
-      return;
-    };
     let deck = VarArray.fromArray<Nat8>(Cards.freshDeck());
     Cards.shuffle(deck, Cards.entropyToNat(Blob.toArray(entropy)));
     t.deck := VarArray.toArray<Nat8>(deck);
