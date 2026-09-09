@@ -10,6 +10,8 @@ import Map "mo:core/Map";
 import Array "mo:core/Array";
 import VarArray "mo:core/VarArray";
 import Runtime "mo:core/Runtime";
+import Debug "mo:core/Debug";
+import Error "mo:core/Error";
 import Cards "cards";
 import Types "types";
 
@@ -415,7 +417,11 @@ actor self {
     Map.add(pendingFundsActions, Principal.compare, caller, true);
     let outcome = switch (Map.get(tables, Nat.compare, tableId)) {
       case null { #Err(#TableNotFound) };
-      case (?t) { await* doJoin(t, seatIndex, caller) };
+      case (?t) {
+        let r = await* doJoin(t, seatIndex, caller);
+        if (r == #Ok(())) { await self.triggerDeal(t.id) };
+        r;
+      };
     };
     Map.remove(pendingFundsActions, Principal.compare, caller);
     outcome;
@@ -432,7 +438,11 @@ actor self {
     Map.add(pendingFundsActions, Principal.compare, caller, true);
     let outcome = switch (findTableByCode(code)) {
       case null { #Err(#TableNotFound) };
-      case (?t) { await* doJoin(t, seatIndex, caller) };
+      case (?t) {
+        let r = await* doJoin(t, seatIndex, caller);
+        if (r == #Ok(())) { await self.triggerDeal(t.id) };
+        r;
+      };
     };
     Map.remove(pendingFundsActions, Principal.compare, caller);
     outcome;
@@ -609,6 +619,10 @@ actor self {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NotSeated) } };
     let seatIndex = switch (findSeat(t, caller)) { case (?i) { i }; case null { return #Err(#NotSeated) } };
     t.seats[seatIndex].sittingOut := sittingOut;
+    // Sitting back in can be exactly what brings a WaitingForPlayers table
+    // back up to 2 active seats -- try dealing right away rather than
+    // waiting on the timer (see maybeDealNow's own comment).
+    if (not sittingOut) { await self.triggerDeal(tableId) };
     #Ok;
   };
 
@@ -667,7 +681,28 @@ actor self {
   // randomness needed, so no further async is needed there either.
   func dealNextHand(t : Types.Table) : async* () {
     let active = seatedActiveIndices(t);
-    if (active.size() < 2) { return };
+    if (active.size() < 2) {
+      // Quiet for genuinely-empty tables (0 occupants -- the overwhelming
+      // majority of tick() calls into this function) but logged when a
+      // table has real occupants and still isn't dealing: 2026-09-09
+      // instrumentation for a recurring "never deals via the timer, works
+      // instantly via adminForceDealNextHand" mainnet incident -- neither
+      // this guard nor the later liveSeats one (also logged) had fired in
+      // prior occurrences, which was itself the confusing part.
+      let occupied = Array.filter<Types.Seat>(t.seats, func(s) { s.occupant != null });
+      if (occupied.size() > 0) {
+        Debug.print(
+          "dealNextHand: top guard, active<2, table=" # debug_show (t.id) #
+          " active=" # debug_show (active) # " seats=" # debug_show (
+            Array.map<Types.Seat, (Bool, Bool, Bool, Nat)>(
+              t.seats,
+              func(s) { (s.occupant != null, s.sittingOut, s.inHand, s.stack) },
+            )
+          )
+        );
+      };
+      return;
+    };
     if (t.phase != #WaitingForPlayers) { return };
 
     // Fetch entropy BEFORE mutating any seat/table state -- this is the
@@ -684,9 +719,17 @@ actor self {
     // left WaitingForPlayers). Symptom: leaveTable stuck queuing forever
     // ("Leaving after this hand...") since it trusts seat.inHand.
     let Management : Types.ManagementActor = actor ("aaaaa-aa");
-    let entropy = try { await Management.raw_rand() } catch (_e) {
+    let entropy = try { await Management.raw_rand() } catch (e) {
       // Couldn't get randomness -- stay in WaitingForPlayers and try again
       // on the next timer tick rather than dealing with a weak fallback.
+      // 2026-09-09: logged -- this is the last un-instrumented silent-skip
+      // site in this function (the two guards after this point already
+      // log), and this morning's own comment already suspected raw_rand
+      // specifically failing when called from a Timer-invoked closure on
+      // mainnet (vs succeeding every time as a plain update call, which is
+      // all adminForceDealNextHand ever does) without ever having proven
+      // it.
+      Debug.print("dealNextHand: raw_rand failed, table=" # debug_show (t.id) # " error=" # Error.message(e));
       return;
     };
 
@@ -699,7 +742,10 @@ actor self {
     // reset its board). Nothing below this point ever awaits again, so
     // whichever call resumes first and passes this check runs to
     // completion atomically before any other call's continuation can run.
-    if (t.phase != #WaitingForPlayers) { return };
+    if (t.phase != #WaitingForPlayers) {
+      Debug.print("dealNextHand: phase changed during raw_rand await, table=" # debug_show (t.id) # " phase=" # debug_show (t.phase));
+      return;
+    };
 
     for (s in t.seats.vals()) {
       s.holeCards := null;
@@ -724,7 +770,32 @@ actor self {
     };
 
     let liveNow = liveSeats(t);
-    if (liveNow.size() < 2) { t.phase := #WaitingForPlayers; return };
+    if (liveNow.size() < 2) {
+      // Shouldn't normally happen -- the top-of-function guard already
+      // required 2+ seatedActiveIndices (occupant set, not sittingOut,
+      // stack NOT checked there) before the only await in this function.
+      // This second, stricter liveSeats gate (inHand, which DOES require
+      // stack > 0) is checked after that await -- so this only fires if a
+      // seat's stack/sittingOut genuinely changed during the raw_rand
+      // round-trip (a real concurrent update call landing mid-await) or
+      // some other seat-state edge case. Logged (2026-09-09) specifically
+      // to catch a recurring "never deals via the timer, works instantly
+      // via adminForceDealNextHand" mainnet incident whose root cause
+      // wasn't otherwise provable -- see `icp canister logs` if this ever
+      // fires again.
+      Debug.print(
+        "dealNextHand: aborting to WaitingForPlayers, table=" # debug_show (t.id) #
+        " handNumber=" # debug_show (t.handNumber) # " liveNow=" # debug_show (liveNow) #
+        " seats=" # debug_show (
+          Array.map<Types.Seat, (Bool, Bool, Bool, Nat)>(
+            t.seats,
+            func(s) { (s.occupant != null, s.sittingOut, s.inHand, s.stack) },
+          )
+        )
+      );
+      t.phase := #WaitingForPlayers;
+      return;
+    };
 
     // Heads-up (2 players): dealer posts small blind, same convention as
     // real rooms. 3+: small blind is the seat after the dealer.
@@ -757,6 +828,50 @@ actor self {
     t.toAct := liveNow.size();
     let firstToAct = switch (nextOccupiedFrom(t, bbSeat, true)) { case (?s) { s }; case null { bbSeat } };
     setActing(t, ?firstToAct);
+  };
+
+  // Attempts to deal a table that's WaitingForPlayers and past its pause,
+  // same check tick() has always done -- pulled out so player-initiated
+  // update calls (join, sitting back in) can also trigger it directly, not
+  // just the timer. 2026-09-09: root-caused (see startTicker's own comment
+  // below) that `Management.raw_rand()` reliably fails specifically when
+  // called from inside a Timer-invoked closure on mainnet ("could not
+  // perform remote call"), while succeeding every time as a plain
+  // caller-initiated update call -- exactly what this is. A new seat
+  // filling a table (the most common way a game is expected to "just
+  // start") no longer has to wait on the flaky timer path at all.
+  func maybeDealNow(t : Types.Table) : async* () {
+    if (t.phase != #WaitingForPlayers) { return };
+    let ready = switch (t.nextHandAt) {
+      case (?at) { Time.now() >= at };
+      case null { true };
+    };
+    if (ready) {
+      t.nextHandAt := null;
+      await* dealNextHand(t);
+    };
+  };
+
+  // 2026-09-09: every caller below routes THROUGH this public method (a
+  // genuine self-call via `self.triggerDeal(...)`, a real inter-canister
+  // round trip) instead of calling `maybeDealNow`/`dealNextHand` directly
+  // as a local function. Empirically, only that exact shape --
+  // `adminForceDealNextHand`, called fresh from outside -- ever succeeded
+  // reliably at the `raw_rand` call inside; every local-function-call path
+  // (from tick(), and even from a plain player-triggered sitOut once it
+  // called `maybeDealNow` as a local function) consistently failed with
+  // "could not perform remote call", logged directly, not guessed. The
+  // exact IC/Motoko mechanism behind that difference isn't confirmed, but
+  // the empirical pattern was consistent enough across many attempts to
+  // build the real fix around it rather than keep guessing blind. No
+  // permission gate (unlike adminForceDealNextHand) -- safe for anyone to
+  // call, since dealNextHand's own guards make it a no-op unless the table
+  // genuinely needs dealing.
+  public shared func triggerDeal(tableId : Nat) : async () {
+    switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { await* maybeDealNow(t) };
+      case null {};
+    };
   };
 
   func postBlind(t : Types.Table, seatIndex : Nat, amount : Nat) {
@@ -1054,14 +1169,9 @@ actor self {
     for ((_, t) in Map.entries(tables)) {
       switch (t.phase) {
         case (#WaitingForPlayers) {
-          let ready = switch (t.nextHandAt) {
-            case (?at) { Time.now() >= at };
-            case null { true };
-          };
-          if (ready) {
-            t.nextHandAt := null;
-            await* dealNextHand(t);
-          };
+          // Genuine self-call, not a local function call -- see
+          // triggerDeal's own comment for why that distinction matters.
+          await self.triggerDeal(t.id);
         };
         case (#Showdown) {
           switch (t.nextHandAt) {
@@ -1117,20 +1227,27 @@ actor self {
   //
   // Uses a self-rescheduling one-shot `Timer.setTimer` instead of
   // `Timer.recurringTimer`, which fires on a fixed wall-clock schedule
-  // regardless of whether the previous tick() is still resolving --
-  // reproduced live on mainnet's Free Play table (2026-09-09): dealing a
-  // fresh hand (the one step in tick() with a real cross-canister await,
-  // for raw_rand) never completed via the timer, forever, even with every
-  // dealing precondition satisfied and the exact same dealNextHand call
-  // succeeding instantly and reliably every time it was triggered as a
-  // plain update call instead -- root cause not fully confirmed (possibly
-  // an interaction specific to a timer-triggered call awaiting a further
-  // cross-canister call on mainnet, not reproducible locally), but a
-  // self-rescheduling timer that only re-arms once tick() truly finishes
-  // structurally rules out that whole class of overlap/interference
-  // regardless of the exact mechanism. `adminForceDealNextHand` (below)
-  // remains as a manual recovery lever in case a table ever gets stuck
-  // again despite this.
+  // regardless of whether the previous tick() is still resolving.
+  //
+  // 2026-09-09, root-caused after three iterations on this same "dealing
+  // never completes via the timer" incident: `icp canister logs` finally
+  // caught it directly, once every un-instrumented silent-return in
+  // dealNextHand was logged -- `Management.raw_rand()` was failing on
+  // EVERY attempt with "could not perform remote call", repeating every
+  // tick, while the exact same call succeeded instantly and reliably
+  // every time it was triggered directly via `adminForceDealNextHand`
+  // instead. That error is consistent with the canister running out of
+  // available outstanding-call slots -- and a same-day intermediate
+  // attempt at this fix (reschedule the next timer *before* awaiting
+  // tick(), to survive an uncatchable trap) is exactly what could cause
+  // that: it let an unbounded number of overlapping tick() calls pile up
+  // whenever a single dealNextHand's raw_rand was slow, each one making
+  // its own concurrent raw_rand attempt for the same table. Reverted to
+  // rescheduling the next timer only *after* tick() truly finishes, so at
+  // most one raw_rand call for a given table is ever in flight at a time
+  // -- the original point of self-rescheduling in the first place, and
+  // the actual fix. `adminForceDealNextHand` remains as a manual recovery
+  // lever regardless.
   var timerId : ?Timer.TimerId = null;
   func startTicker<system>() {
     timerId := ?Timer.setTimer<system>(
@@ -1142,6 +1259,60 @@ actor self {
     );
   };
   startTicker<system>();
+
+  // Re-exposed 2026-09-09 (see the stable-var comment above) specifically
+  // to diagnose this recurring "timer stops advancing" incident -- confirms
+  // whether the ticker is actually still firing at all, without guessing.
+  public query func getTickDiagnostics() : async { tickCount : Nat; lastTickAt : Int; now : Int } {
+    { tickCount; lastTickAt; now = Time.now() };
+  };
+
+  // One-shot 2026-09-09 diagnostic: reports exactly what tick()'s own
+  // WaitingForPlayers branch would see and decide for one table, in a
+  // single atomic snapshot -- to settle whether it's actually reaching a
+  // "ready to deal" state that then silently doesn't happen, versus
+  // something before that point (not-ready, or not even reaching this
+  // table). Remove once this incident is root-caused.
+  public query func getDealReadiness(tableId : Nat) : async {
+    phase : Text;
+    nextHandAt : ?Int;
+    ready : Bool;
+    activeCount : Nat;
+    // Recomputed fresh from occupant/sittingOut/stack, same formula
+    // dealNextHand's own post-raw_rand loop uses -- NOT liveSeats(t),
+    // whose backing `inHand` field is stale garbage outside of an actual
+    // deal attempt (reset false by every Showdown cleanup) and was
+    // misleadingly always 0 at rest, telling us nothing real.
+    wouldBeLiveCount : Nat;
+    seats : [(Bool, Bool, Nat)]; // (occupied, sittingOut, stack) per seat
+    now : Int;
+  } {
+    switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) {
+        let ready = switch (t.nextHandAt) {
+          case (?at) { Time.now() >= at };
+          case null { true };
+        };
+        var wouldBeLive = 0;
+        for (s in t.seats.vals()) {
+          if (s.occupant != null and not s.sittingOut and s.stack > 0) { wouldBeLive += 1 };
+        };
+        {
+          phase = debug_show (t.phase);
+          nextHandAt = t.nextHandAt;
+          ready;
+          activeCount = seatedActiveIndices(t).size();
+          wouldBeLiveCount = wouldBeLive;
+          seats = Array.map<Types.Seat, (Bool, Bool, Nat)>(
+            t.seats,
+            func(s) { (s.occupant != null, s.sittingOut, s.stack) },
+          );
+          now = Time.now();
+        };
+      };
+      case null { Runtime.trap("table not found") };
+    };
+  };
 
   // ---- Admin: rake bankroll (same propose/48h-wait/execute/lock shape as
   // dice's own withdrawal path -- controller-only, delayed, cancelable,
