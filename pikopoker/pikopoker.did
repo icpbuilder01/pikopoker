@@ -163,10 +163,30 @@ service : {
                              Err: ActionError;
                              Ok;
                            });
+  getDealReadiness: (tableId: nat) ->
+   (record {
+      activeCount: nat;
+      nextHandAt: opt int;
+      now: int;
+      phase: text;
+      ready: bool;
+      seats: vec record {
+                   bool;
+                   bool;
+                   nat;
+                 };
+      wouldBeLiveCount: nat;
+    }) query;
   getLobby: () -> (vec TableSummary) query;
   getMyPrivateTables: () -> (vec TableSummary) query;
   getRakeBalance: () -> (nat) query;
   getTableView: (tableId: nat) -> (opt TableView) query;
+  getTickDiagnostics: () ->
+   (record {
+      lastTickAt: int;
+      now: int;
+      tickCount: nat;
+    }) query;
   joinPrivateTable: (code: text, seatIndex: nat) ->
    (variant {
       Err: JoinError;
@@ -196,4 +216,5 @@ service : {
                                                 Err: JoinError;
                                                 Ok;
                                               });
+  triggerDeal: (tableId: nat) -> ();
 }
