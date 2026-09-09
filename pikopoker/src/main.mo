@@ -419,7 +419,16 @@ actor self {
       case null { #Err(#TableNotFound) };
       case (?t) {
         let r = await* doJoin(t, seatIndex, caller);
-        if (r == #Ok(())) { await self.triggerDeal(t.id) };
+        // 2026-09-10: a real bug, found live -- this self-call failing
+        // uncaught (cycles shortage, or the same self-call flakiness
+        // noted on triggerDeal's own comment) used to skip the
+        // Map.remove below entirely, permanently locking that principal
+        // out of ever joining ANY table again (every future join hits
+        // the pendingFundsActions guard above and returns
+        // TransferFailed/TemporarilyUnavailable forever). The deal
+        // trigger is a nice-to-have on top of an already-successful
+        // join, never worth losing the join over.
+        if (r == #Ok(())) { try { await self.triggerDeal(t.id) } catch (_e) {} };
         r;
       };
     };
@@ -440,7 +449,16 @@ actor self {
       case null { #Err(#TableNotFound) };
       case (?t) {
         let r = await* doJoin(t, seatIndex, caller);
-        if (r == #Ok(())) { await self.triggerDeal(t.id) };
+        // 2026-09-10: a real bug, found live -- this self-call failing
+        // uncaught (cycles shortage, or the same self-call flakiness
+        // noted on triggerDeal's own comment) used to skip the
+        // Map.remove below entirely, permanently locking that principal
+        // out of ever joining ANY table again (every future join hits
+        // the pendingFundsActions guard above and returns
+        // TransferFailed/TemporarilyUnavailable forever). The deal
+        // trigger is a nice-to-have on top of an already-successful
+        // join, never worth losing the join over.
+        if (r == #Ok(())) { try { await self.triggerDeal(t.id) } catch (_e) {} };
         r;
       };
     };
@@ -622,7 +640,11 @@ actor self {
     // Sitting back in can be exactly what brings a WaitingForPlayers table
     // back up to 2 active seats -- try dealing right away rather than
     // waiting on the timer (see maybeDealNow's own comment).
-    if (not sittingOut) { await self.triggerDeal(tableId) };
+    // Same reasoning as joinPublicTable/joinPrivateTable's try/catch
+    // around this exact call: the sittingOut flag above is already
+    // committed by this point, so a failure here should never turn an
+    // otherwise-successful sit-back-in into a client-visible error.
+    if (not sittingOut) { try { await self.triggerDeal(tableId) } catch (_e) {} };
     #Ok;
   };
 
@@ -1400,6 +1422,20 @@ actor self {
       if (s.occupant != null) { Runtime.trap("table has an occupied seat") };
     };
     Map.remove(tables, Nat.compare, tableId);
+  };
+
+  // 2026-09-10 recovery lever: clears a principal's pendingFundsActions
+  // entry. That guard exists to stop a double-submitted join/leave/top-up
+  // racing itself, but a same-day bug (now fixed at the source, see the
+  // try/catch on joinPublicTable/joinPrivateTable's own triggerDeal call)
+  // could leave a principal locked in it forever if that specific call
+  // failed uncaught after a join had already succeeded -- every future
+  // join for that principal, on ANY table, then permanently returns
+  // TransferFailed/TemporarilyUnavailable. Safe to call speculatively:
+  // a no-op if the principal wasn't actually stuck.
+  public shared ({ caller }) func adminClearPendingFunds(target : Principal) : async () {
+    requireController(caller);
+    Map.remove(pendingFundsActions, Principal.compare, target);
   };
 
   // Admin override to force a stuck/misbehaving seat out, bypassing the
