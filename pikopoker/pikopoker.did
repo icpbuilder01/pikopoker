@@ -127,6 +127,7 @@ type ActionError =
    NotYourTurn;
  };
 service : {
+  adminForceDealNextHand: (tableId: nat) -> ();
   adminKickSeat: (tableId: nat, seatIndex: nat) ->
    (variant {
       Err: LeaveError;
