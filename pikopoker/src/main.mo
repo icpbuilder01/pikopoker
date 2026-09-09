@@ -985,20 +985,32 @@ actor self {
     if (s.committedThisRound > t.currentBet) {
       t.minRaiseAmount := s.committedThisRound - t.currentBet;
       t.currentBet := s.committedThisRound;
-      // Action reopens for everyone else still live and not all-in.
+      // Action reopens for everyone else still live and not all-in --
+      // `reopen` already excludes this seat (the raiser), so it's the
+      // exact number of players who still need to act. Found live
+      // (2026-09-10, the dev: "if the first checks and the second bets,
+      // the turn passes without forcing the first to call or fold"):
+      // the old code set toAct to this already-correct count and then
+      // *also* decremented it once more via a shared advanceTurnOnly
+      // helper, double-counting the raiser's own action and closing the
+      // betting round one player too early -- e.g. heads-up, A checks
+      // (toAct 2->1), B raises (reopen correctly computes 1, for A) --
+      // the extra decrement took it to 0, ending the round without ever
+      // giving A the chance to call/fold/re-raise B's bet.
       var reopen = 0;
       for (i in liveSeats(t).vals()) {
         if (i != seatIndex and not t.seats[i].isAllIn) { reopen += 1 };
       };
       t.toAct := reopen;
+    } else if (t.toAct > 0) {
+      // Only reachable if a short all-in still doesn't clear the current
+      // bet (raiseSize/minRaise checks above allow that) -- didn't
+      // reopen anyone else's action, so this seat's own turn is the one
+      // being consumed here, same as a normal call.
+      t.toAct -= 1;
     };
-    advanceTurnOnly(t, seatIndex);
+    finishActionAdvance(t, seatIndex);
     #Ok;
-  };
-
-  func advanceTurnOnly(t : Types.Table, actedSeat : Nat) {
-    if (t.toAct > 0) { t.toAct -= 1 };
-    finishActionAdvance(t, actedSeat);
   };
 
   func advanceAfterAction(t : Types.Table, actedSeat : Nat) {
