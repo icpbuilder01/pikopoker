@@ -1409,6 +1409,21 @@ section.block > *:last-child {
     top: -6px;
     left: -6px;
   }
+
+  /* The portrait felt (aspect-ratio 3/4 above) is much narrower than
+     desktop's landscape one, but seats at the exact left/right of the
+     ellipse sit at the same height as this vertically-centered block --
+     the 90%-wide desktop sizing left no horizontal room beside them and
+     overlapped their name/stack labels. Narrower here, and the pot pills
+     stack instead of running in one wide row, so both fit side by side. */
+  .felt-center {
+    width: min(46%, 150px);
+  }
+
+  .felt-pots {
+    flex-direction: column;
+    gap: 3px;
+  }
 }
 
 @media (max-width: 420px) {

@@ -10,6 +10,7 @@ import { SeatCard } from "./SeatCard";
 import { ChipAmount } from "./ChipAmount";
 import { Confetti } from "./Confetti";
 import { Rules } from "./Rules";
+import { QrCode } from "./QrCode";
 import { Phase, LeaveError, type ActionError, type JoinError, type TableView } from "../bindings/pikopoker/pikopoker";
 
 interface TableRoomProps {
@@ -27,13 +28,18 @@ const ACTION_TIMEOUT_SECONDS = 30;
 // clockwise, matching the seat ordering the backend deals in. Kept inset
 // from the true 50% radius (rx/ry below) so a seat card's own width/height
 // doesn't push it past the felt-wrap edge on narrow (mobile) viewports.
+// `.felt-wrap` switches from a 16:10 landscape oval to a taller 3:4 portrait
+// one at the same 640px breakpoint (see App.css) -- the desktop radii are
+// too large for that narrower shape, so `compact` picks smaller ones sized
+// for the smallest phones this app supports (~320px wide).
 function seatPosition(
   index: number,
   total: number,
+  compact: boolean,
 ): { top: string; left: string; dirX: number; dirY: number } {
   const angle = (2 * Math.PI * index) / total - Math.PI;
-  const rx = 44;
-  const ry = 40;
+  const rx = compact ? 36 : 44;
+  const ry = compact ? 34 : 40;
   const left = 50 + rx * Math.cos(angle);
   const top = 50 + ry * Math.sin(angle);
   // Unit vector pointing from this seat back toward the felt's center --
@@ -131,8 +137,12 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [showInviteQr, setShowInviteQr] = useState(false);
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [leavePending, setLeavePending] = useState(false);
+  // Mirrors App.css's `@media (max-width: 640px)` felt-wrap breakpoint --
+  // seatPosition() needs to know which ellipse shape it's placing seats on.
+  const [isCompact, setIsCompact] = useState(() => window.matchMedia("(max-width: 640px)").matches);
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
@@ -157,6 +167,13 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const onChange = () => setIsCompact(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
   const myPrincipalText = identity ? identity.getPrincipal().toText() : null;
@@ -477,12 +494,30 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
             Rules
           </button>
           {view && view.kind.__kind__ === "Private" && privateCode && (
-            <button className="button secondary small" onClick={handleCopyInvite}>
-              {copied ? "Copied!" : "Copy invite link"}
-            </button>
+            <>
+              <button className="button secondary small" onClick={handleCopyInvite}>
+                {copied ? "Copied!" : "Copy invite link"}
+              </button>
+              <button className="button secondary small" onClick={() => setShowInviteQr((v) => !v)}>
+                {showInviteQr ? "Hide QR" : "Show QR"}
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {showInviteQr && view && view.kind.__kind__ === "Private" && privateCode && (
+        <div className="my-seat-bar join-seat-form">
+          <div className="qr-box">
+            <QrCode
+              value={`${frontendUrl}?table=${tableId.toString()}&code=${privateCode}`}
+              size={160}
+              label="Table invite QR code"
+            />
+          </div>
+          <p className="empty-state">Scan to open an invite link straight to this table.</p>
+        </div>
+      )}
 
       {loadError && <p className="error-text">{loadError}</p>}
 
@@ -520,7 +555,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
             </div>
 
             {view.seats.map((seat, i) => {
-              const pos = seatPosition(i, view.seats.length);
+              const pos = seatPosition(i, view.seats.length, isCompact);
               return (
                 <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
                   <SeatCard
