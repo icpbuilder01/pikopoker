@@ -685,6 +685,17 @@ actor self {
       return;
     };
 
+    // Re-check phase after the only await in this function -- if another
+    // concurrent dealNextHand call for this same table (e.g. from an
+    // orphaned duplicate timer, see startTicker's own comment) already won
+    // the race and dealt a hand while this call's raw_rand was in flight,
+    // t.phase is no longer WaitingForPlayers and mutating again here would
+    // stomp an already-live hand (re-shuffle its deck, re-post blinds,
+    // reset its board). Nothing below this point ever awaits again, so
+    // whichever call resumes first and passes this check runs to
+    // completion atomically before any other call's continuation can run.
+    if (t.phase != #WaitingForPlayers) { return };
+
     for (s in t.seats.vals()) {
       s.holeCards := null;
       s.committedThisRound := 0;
@@ -1025,7 +1036,16 @@ actor self {
   // post-hand pause. The only recurring automation in this canister, same
   // "no manual intervention" spirit as mother/dice's own timers. ----
 
+  // Left over from a 2026-09-09 debugging session (their query methods have
+  // been removed) -- keep them declared rather than delete them: Motoko's
+  // enhanced orthogonal persistence rejects an upgrade that drops a stable
+  // var outright ("RTS error: Memory-incompatible program upgrade"),
+  // confirmed directly against this exact canister. Harmless either way.
+  var tickCount : Nat = 0;
+  var lastTickAt : Int = 0;
   func tick() : async* () {
+    tickCount += 1;
+    lastTickAt := Time.now();
     for ((_, t) in Map.entries(tables)) {
       switch (t.phase) {
         case (#WaitingForPlayers) {
@@ -1085,10 +1105,36 @@ actor self {
     };
   };
 
+  // Timers do NOT survive an upgrade (per core/Timer.mo's own doc comment)
+  // -- `startTicker` being a bare top-level statement that re-runs on every
+  // upgrade is therefore exactly right, not a bug: it's the only way the
+  // recurring tick() timer gets re-established after each backend upgrade.
+  //
+  // Uses a self-rescheduling one-shot `Timer.setTimer` instead of
+  // `Timer.recurringTimer`, which fires on a fixed wall-clock schedule
+  // regardless of whether the previous tick() is still resolving --
+  // reproduced live on mainnet's Free Play table (2026-09-09): dealing a
+  // fresh hand (the one step in tick() with a real cross-canister await,
+  // for raw_rand) never completed via the timer, forever, even with every
+  // dealing precondition satisfied and the exact same dealNextHand call
+  // succeeding instantly and reliably every time it was triggered as a
+  // plain update call instead -- root cause not fully confirmed (possibly
+  // an interaction specific to a timer-triggered call awaiting a further
+  // cross-canister call on mainnet, not reproducible locally), but a
+  // self-rescheduling timer that only re-arms once tick() truly finishes
+  // structurally rules out that whole class of overlap/interference
+  // regardless of the exact mechanism. `adminForceDealNextHand` (below)
+  // remains as a manual recovery lever in case a table ever gets stuck
+  // again despite this.
   var timerId : ?Timer.TimerId = null;
   func startTicker<system>() {
-    switch (timerId) { case (?_) {}; case null {} };
-    timerId := ?Timer.recurringTimer<system>(#seconds TICK_INTERVAL_SECONDS, func() : async () { await* tick() });
+    timerId := ?Timer.setTimer<system>(
+      #seconds TICK_INTERVAL_SECONDS,
+      func() : async () {
+        await* tick();
+        startTicker<system>();
+      },
+    );
   };
   startTicker<system>();
 
@@ -1199,5 +1245,24 @@ actor self {
     seat.committedThisRound := 0;
     seat.committedThisHand := 0;
     result;
+  };
+
+  // Manual recovery lever: forces a table stuck in WaitingForPlayers (with
+  // enough active seats) to attempt dealing right away via a plain update
+  // call, bypassing the tick() timer entirely. Kept permanently after a
+  // 2026-09-09 mainnet incident where dealing a fresh hand from
+  // WaitingForPlayers never completed via the timer specifically (every
+  // other timer-driven step -- action timeouts, the Showdown pause --
+  // worked fine, and dealNextHand itself always succeeded instantly when
+  // called this way instead) -- root cause not fully confirmed, but this
+  // is what actually unstuck the live table, and the switch to a
+  // self-rescheduling timer above may not fully rule out a recurrence.
+  public shared ({ caller }) func adminForceDealNextHand(tableId : Nat) : async () {
+    requireController(caller);
+    let t = switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { t };
+      case null { Runtime.trap("table not found") };
+    };
+    await* dealNextHand(t);
   };
 }
