@@ -146,6 +146,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   const [showInviteQr, setShowInviteQr] = useState(false);
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [leavePending, setLeavePending] = useState(false);
+  const [showCustomBet, setShowCustomBet] = useState(false);
   // Mirrors App.css's `@media (max-width: 640px)` felt-wrap breakpoint --
   // seatPosition() needs to know which ellipse shape it's placing seats on.
   const [isCompact, setIsCompact] = useState(() => window.matchMedia("(max-width: 640px)").matches);
@@ -226,6 +227,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   useEffect(() => {
     if (isMyTurn && view && turnKey !== lastTurnKeyRef.current) {
       setRaiseInput(formatPiko(view.minRaiseTo));
+      setShowCustomBet(false);
     }
     lastTurnKeyRef.current = turnKey;
   }, [turnKey, isMyTurn, view]);
@@ -408,8 +410,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
     }
   }
 
-  async function handleRaise() {
-    const amount = parseAmount(raiseInput);
+  async function submitRaise(amount: bigint | null) {
     if (!identity || amount === null) {
       setActionError("Enter a valid amount.");
       return;
@@ -426,6 +427,10 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleRaise() {
+    await submitRaise(parseAmount(raiseInput));
   }
 
   async function handleCopyInvite() {
@@ -665,50 +670,6 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                 )}
               </div>
 
-              <div className="bet-presets">
-                <span className="bet-presets-label">Quick bet -- sets the amount below, still needs confirming</span>
-                <div className="bet-presets-row">
-                  <button className="button secondary bet-preset" onClick={() => setRaiseInput(formatPiko(minRaiseFloor))}>
-                    <span className="bet-preset-label">Min</span>
-                    <ChipAmount amount={minRaiseFloor} unit={unit} size={11} />
-                  </button>
-                  <button className="button secondary bet-preset" onClick={() => setRaiseInput(formatPiko(halfPotPreset))}>
-                    <span className="bet-preset-label">&frac12; Pot</span>
-                    <ChipAmount amount={halfPotPreset} unit={unit} size={11} />
-                  </button>
-                  <button className="button secondary bet-preset" onClick={() => setRaiseInput(formatPiko(potPreset))}>
-                    <span className="bet-preset-label">Pot</span>
-                    <ChipAmount amount={potPreset} unit={unit} size={11} />
-                  </button>
-                  <button className="button secondary bet-preset" onClick={() => setRaiseInput(formatPiko(maxAllInAmount))}>
-                    <span className="bet-preset-label">All-in</span>
-                    <ChipAmount amount={maxAllInAmount} unit={unit} size={11} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="bet-sizer">
-                <span className="bet-presets-label">Or choose your own amount</span>
-                <input
-                  type="range"
-                  className="bet-slider"
-                  min={sliderMin}
-                  max={sliderMax}
-                  step={sliderStep}
-                  value={sliderValue}
-                  onChange={(e) => setRaiseInput(formatPiko(BigInt(Math.round(Number(e.target.value)))))}
-                />
-                <label className="bet-amount-input">
-                  <input
-                    className="input"
-                    value={raiseInput}
-                    inputMode="decimal"
-                    onChange={(e) => setRaiseInput(e.target.value)}
-                  />
-                  <span className="bet-amount-unit">{unit}</span>
-                </label>
-              </div>
-
               <div className="action-buttons">
                 <button className="button danger" disabled={busy} onClick={handleFold}>
                   Fold
@@ -722,11 +683,69 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                     </>
                   )}
                 </button>
-                <button className="button bet-cta" disabled={busy} onClick={handleRaise}>
-                  {view.currentBet === 0n ? "Bet" : "Raise"}{" "}
-                  <ChipAmount amount={parsedRaise ?? 0n} unit={unit} size={12} />
-                </button>
               </div>
+
+              <div className="bet-presets">
+                <span className="bet-presets-label">Or raise -- tap an amount to bet it right away</span>
+                <div className="bet-presets-row">
+                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(minRaiseFloor)}>
+                    <span className="bet-preset-label">Min</span>
+                    <ChipAmount amount={minRaiseFloor} unit={unit} size={11} />
+                  </button>
+                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(halfPotPreset)}>
+                    <span className="bet-preset-label">&frac12; Pot</span>
+                    <ChipAmount amount={halfPotPreset} unit={unit} size={11} />
+                  </button>
+                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(potPreset)}>
+                    <span className="bet-preset-label">Pot</span>
+                    <ChipAmount amount={potPreset} unit={unit} size={11} />
+                  </button>
+                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(maxAllInAmount)}>
+                    <span className="bet-preset-label">All-in</span>
+                    <ChipAmount amount={maxAllInAmount} unit={unit} size={11} />
+                  </button>
+                </div>
+              </div>
+
+              {!showCustomBet && (
+                <button
+                  type="button"
+                  className="button secondary small bet-custom-toggle"
+                  onClick={() => setShowCustomBet(true)}
+                >
+                  Choose a different amount
+                </button>
+              )}
+
+              {showCustomBet && (
+                <div className="bet-sizer">
+                  <span className="bet-presets-label">Your amount</span>
+                  <input
+                    type="range"
+                    className="bet-slider"
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={sliderStep}
+                    value={sliderValue}
+                    onChange={(e) => setRaiseInput(formatPiko(BigInt(Math.round(Number(e.target.value)))))}
+                  />
+                  <div className="bet-sizer-row">
+                    <label className="bet-amount-input">
+                      <input
+                        className="input"
+                        value={raiseInput}
+                        inputMode="decimal"
+                        onChange={(e) => setRaiseInput(e.target.value)}
+                      />
+                      <span className="bet-amount-unit">{unit}</span>
+                    </label>
+                    <button className="button bet-cta" disabled={busy} onClick={handleRaise}>
+                      {view.currentBet === 0n ? "Bet" : "Raise"}{" "}
+                      <ChipAmount amount={parsedRaise ?? 0n} unit={unit} size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
