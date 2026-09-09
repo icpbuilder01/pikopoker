@@ -4,13 +4,14 @@ import QRCode from "qrcode";
 interface QrCodeProps {
   value: string;
   size?: number;
+  label?: string;
 }
 
 // Renders modules as plain SVG rects with fill="currentColor" instead of
 // using the library's own toString()/toDataURL() renderers -- those bake in
 // a fixed hex color pair, which would either be unreadable (dark-on-dark)
 // or force a hardcoded light background that ignores the site's dark theme.
-export function QrCode({ value, size = 200 }: QrCodeProps) {
+export function QrCode({ value, size = 200, label = "QR code" }: QrCodeProps) {
   const modules = useMemo(() => {
     try {
       return QRCode.create(value, { errorCorrectionLevel: "M" }).modules;
@@ -43,7 +44,7 @@ export function QrCode({ value, size = 200 }: QrCodeProps) {
       shapeRendering="crispEdges"
       className="qr-svg"
       role="img"
-      aria-label="PikoPoker wallet QR code"
+      aria-label={label}
     >
       <rect x={0} y={0} width={dimension} height={dimension} fill="var(--surface)" />
       <g fill="var(--text)">{rects}</g>

@@ -4,6 +4,7 @@ import { getPikopokerActor } from "../lib/actors";
 import { frontendUrl } from "../lib/canister-env";
 import { formatPiko, parseAmount } from "../lib/format";
 import { CreatePrivateError, Phase, type TableSummary } from "../bindings/pikopoker/pikopoker";
+import { QrCode } from "./QrCode";
 
 interface LobbyProps {
   identity: Identity | null;
@@ -263,6 +264,13 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
               <button className="button small" onClick={handleCopyCreated}>
                 {copiedCreated ? "Copied!" : "Copy"}
               </button>
+            </div>
+            <div className="qr-box">
+              <QrCode
+                value={`${frontendUrl}?table=${createResult.id.toString()}&code=${createResult.code}`}
+                size={160}
+                label="Table invite QR code"
+              />
             </div>
             <button className="button button-cta" onClick={() => onOpenTable(createResult.id, createResult.code)}>
               Enter table

@@ -140,7 +140,7 @@ export function Wallet({ identity, balance, onClose, onBalanceChange }: WalletPr
       ) : (
         <div className="pay-panel">
           <div className="qr-box">
-            <QrCode value={principalText} size={200} />
+            <QrCode value={principalText} size={200} label="PikoPoker wallet QR code" />
           </div>
           <div className="wallet-address-row">
             <code className="wallet-address">{principalText}</code>
