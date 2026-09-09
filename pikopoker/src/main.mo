@@ -74,7 +74,12 @@ actor self {
   // ---- Constants ----
   let ACTION_TIMEOUT_NANOS : Int = 30 * 1_000_000_000;
   let HAND_PAUSE_NANOS : Int = 5 * 1_000_000_000;
-  let TICK_INTERVAL_SECONDS : Nat = 2;
+  // Halved from 2s (2026-09-09) to shave the worst-case slack off every
+  // timer-driven transition (action timeouts, the Showdown pause, dealing
+  // the next hand) -- tick() itself is cheap when idle (a handful of Map
+  // entries and comparisons, no awaits unless there's actually something
+  // to do), so firing twice as often has no meaningful cycles impact.
+  let TICK_INTERVAL_SECONDS : Nat = 1;
   // Standard capped rake: a share of the pot, never more than a few big
   // blinds -- keeps the house edge negligible on small pots the way real
   // rooms do it. Controller-adjustable like mother's miningFeeE8s (moves

@@ -35,6 +35,7 @@
   background: none;
   border: none;
   padding: 0;
+  min-width: 0;
 }
 
 .brand-logo {
@@ -1434,6 +1435,141 @@ section.block > *:last-child {
   .felt-pots {
     flex-direction: column;
     gap: 3px;
+  }
+
+  /* ---- Compact mobile layout: the whole table room (header, felt, stack
+     bar, action bar) needs to fit one phone screen without scrolling.
+     Rather than hand-tuning a fixed felt size per breakpoint (fragile --
+     the felt's actual available space depends on how tall the action bar
+     ends up, which varies with phase/whether it's your turn), the table
+     room becomes a column flexbox pinned to the real viewport height
+     (100dvh, which already accounts for mobile browser chrome showing/
+     hiding): every functional block (header row, stack bar, action bar)
+     keeps its natural size, and only the felt -- purely decorative --
+     flexes to absorb whatever space is left. That guarantees the controls
+     you actually tap are always fully visible; only the table's own size
+     adapts to the device. `.table-room` keeps `overflow-y: auto` as a
+     last-resort safety net (never a designed state) in case some
+     combination of phase text/seats genuinely can't fit even the
+     functional chrome on a very small device. */
+  .page {
+    padding: 12px 10px 20px;
+  }
+
+  .page.in-table {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding-bottom: 8px;
+    overflow: hidden;
+  }
+
+  .page.in-table > .header {
+    flex: 0 0 auto;
+  }
+
+  .header {
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    gap: 6px 10px;
+  }
+
+  /* The subtitle is the one thing that doesn't fit next to the login
+     button on a phone-width header without spilling past the card's own
+     border (the actual "title overflows" bug) -- simplest fix is to just
+     not show it below the felt-wrap breakpoint, keeping the brand name. */
+  .brand-ticker {
+    display: none;
+  }
+
+  .table-room {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .table-room-header {
+    flex: 0 0 auto;
+    margin-bottom: 4px;
+  }
+
+  /* Lobby + Rules don't reliably fit on one line next to the title at
+     phone width -- rather than an unpredictable 3-way wrap, force the
+     title onto its own second line so the two buttons always stay
+     together on the first. */
+  .table-room-title {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .table-room-title h1 {
+    font-size: 0.95rem;
+  }
+
+  .felt-wrap {
+    flex: 1 1 0;
+    /* Below this width the fixed-size seat cards and felt-center text (not
+       worth making container-query-responsive for one breakpoint) start
+       overlapping -- so the felt refuses to shrink past it even under
+       flex-shrink pressure. On most phones there's still room to spare and
+       it just sizes to fill the leftover space above this floor; only on
+       the very smallest screens does hitting the floor push total content
+       past the viewport, and `.table-room`'s overflow-y: auto (a safety
+       net, not a designed state) picks up the small resulting scroll
+       rather than letting anything visually collide. */
+    min-width: min(100%, 280px);
+    width: auto;
+    max-width: 100%;
+    align-self: center;
+    margin: 4px auto;
+  }
+
+  .my-seat-bar {
+    flex: 0 0 auto;
+    padding: 7px 10px;
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+
+  /* Your stack is already shown on your own seat card, and sit-out/leave
+     aren't decisions worth spending screen space on mid-turn -- freeing
+     this row's height only while the action bar (Fold/Call/raise) is
+     actually showing gives the felt and the action bar the room they
+     need most, and it's back the instant it's not your turn. */
+  .table-room:has(.action-bar.modern) .my-seat-bar {
+    display: none;
+  }
+
+  .action-bar.modern {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .bet-info-tile {
+    padding: 5px 10px;
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .action-bar.modern .action-buttons .button {
+    padding: 11px 12px;
+    font-size: 0.88rem;
+  }
+
+  .bet-preset {
+    padding: 6px 6px;
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  /* The custody/fairness disclosure is useful in the lobby but is pure
+     scroll-padding while actively seated at a table on a phone -- the same
+     info is still one tap away via Rules. */
+  .in-table .footer {
+    display: none;
   }
 }
 

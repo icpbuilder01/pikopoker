@@ -104,7 +104,7 @@ function App() {
   }
 
   return (
-    <main className="page">
+    <main className={`page${view.type === "table" ? " in-table" : ""}`}>
       {showWallet && identity && (
         <Wallet
           identity={identity}
