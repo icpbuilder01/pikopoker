@@ -49,6 +49,12 @@ function seatPosition(
   return { top: `${top}%`, left: `${left}%`, dirX, dirY };
 }
 
+// The slot index seatPosition() places at the felt's bottom-center (nearest
+// the action bar/bet controls below the felt), for a given seat count.
+function bottomSlot(total: number): number {
+  return Math.round((3 * total) / 4) % total;
+}
+
 const pikopokerPrincipal = Principal.fromText(pikopokerCanisterId);
 
 function phaseLabel(p: Phase): string {
@@ -555,7 +561,15 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
             </div>
 
             {view.seats.map((seat, i) => {
-              const pos = seatPosition(i, view.seats.length, isCompact);
+              // Rotate the whole ring so the viewer's own seat always lands
+              // at the bottom-center slot, closest to the bet controls --
+              // relative (clockwise) order among all seats is preserved,
+              // matching standard poker-client convention. Seats stay put
+              // in their default order when you're not seated.
+              const total = view.seats.length;
+              const displayIndex =
+                mySeatIndex >= 0 ? (i - mySeatIndex + bottomSlot(total) + total) % total : i;
+              const pos = seatPosition(displayIndex, total, isCompact);
               return (
                 <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
                   <SeatCard
