@@ -1169,9 +1169,26 @@ actor self {
     for ((_, t) in Map.entries(tables)) {
       switch (t.phase) {
         case (#WaitingForPlayers) {
-          // Genuine self-call, not a local function call -- see
-          // triggerDeal's own comment for why that distinction matters.
-          await self.triggerDeal(t.id);
+          // NOT a self-call here, unlike triggerDeal's other callers --
+          // 2026-09-09, tried that first and it was worse: tickCount
+          // stopped incrementing entirely within one tick of deploying it
+          // (confirmed via getTickDiagnostics), silently killing the
+          // *entire* timer including the action-timeout branch below,
+          // which had never been broken by anything else this whole
+          // incident. Calling `self.someMethod()` from code that's
+          // already executing inside a Timer-invoked closure appears to
+          // hang rather than complete -- plausibly a reentrancy/call-
+          // context issue specific to a canister self-calling itself
+          // while a Timer callback for that same canister is still
+          // in-flight, though not confirmed beyond this reproduction.
+          // Back to a plain local call: the raw_rand-via-timer failure
+          // this was meant to route around is real, but WaitingForPlayers
+          // dealing now has three working self-call paths (join,
+          // sitting back in, triggerDeal itself) that don't depend on
+          // this one succeeding -- the timer catching it too is a bonus,
+          // not the only path, so it's fine for this specific call to
+          // keep failing quietly (logged) rather than hang the clock.
+          await* maybeDealNow(t);
         };
         case (#Showdown) {
           switch (t.nextHandAt) {
