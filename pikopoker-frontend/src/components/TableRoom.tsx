@@ -24,20 +24,22 @@ interface TableRoomProps {
 const POLL_MS = 700;
 const ACTION_TIMEOUT_SECONDS = 30;
 
-// Evenly spaced around the felt's ellipse -- seat 0 at the left, then
-// clockwise, matching the seat ordering the backend deals in. Kept inset
-// from the true 50% radius (rx/ry below) so a seat card's own width/height
-// doesn't push it past the felt-wrap edge on narrow (mobile) viewports.
-// `.felt-wrap` switches from a 16:10 landscape oval to a taller 3:4 portrait
-// one at the same 640px breakpoint (see App.css) -- the desktop radii are
-// too large for that narrower shape, so `compact` picks smaller ones sized
-// for the smallest phones this app supports (~320px wide).
-function seatPosition(
-  index: number,
-  total: number,
-  compact: boolean,
-): { top: string; left: string; dirX: number; dirY: number } {
-  const angle = (2 * Math.PI * index) / total - Math.PI;
+// The angle (radians) of seat `index` out of `total`, evenly spaced
+// clockwise around the ellipse starting at the left -- matches the seat
+// ordering the backend deals in, before any "put my seat at the bottom"
+// rotation is applied.
+function seatAngle(index: number, total: number): number {
+  return (2 * Math.PI * index) / total - Math.PI;
+}
+
+// Kept inset from the true 50% radius (rx/ry below) so a seat card's own
+// width/height doesn't push it past the felt-wrap edge on narrow (mobile)
+// viewports. `.felt-wrap` switches from a 16:10 landscape oval to a taller
+// 3:4 portrait one at the same 640px breakpoint (see App.css) -- the
+// desktop radii are too large for that narrower shape, so `compact` picks
+// smaller ones sized for the smallest phones this app supports (~320px
+// wide).
+function seatPosition(angle: number, compact: boolean): { top: string; left: string; dirX: number; dirY: number } {
   const rx = compact ? 36 : 44;
   const ry = compact ? 34 : 40;
   const left = 50 + rx * Math.cos(angle);
@@ -47,12 +49,6 @@ function seatPosition(
   const dirX = -Math.cos(angle);
   const dirY = -Math.sin(angle);
   return { top: `${top}%`, left: `${left}%`, dirX, dirY };
-}
-
-// The slot index seatPosition() places at the felt's bottom-center (nearest
-// the action bar/bet controls below the felt), for a given seat count.
-function bottomSlot(total: number): number {
-  return Math.round((3 * total) / 4) % total;
 }
 
 const pikopokerPrincipal = Principal.fromText(pikopokerCanisterId);
@@ -565,34 +561,53 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               {view.lastResult && <span className="felt-result">{view.lastResult}</span>}
             </div>
 
-            {view.seats.map((seat, i) => {
-              // Rotate the whole ring so the viewer's own seat always lands
-              // at the bottom-center slot, closest to the bet controls --
-              // relative (clockwise) order among all seats is preserved,
-              // matching standard poker-client convention. Seats stay put
-              // in their default order when you're not seated.
-              const total = view.seats.length;
-              const displayIndex =
-                mySeatIndex >= 0 ? (i - mySeatIndex + bottomSlot(total) + total) % total : i;
-              const pos = seatPosition(displayIndex, total, isCompact);
-              return (
-                <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
-                  <SeatCard
-                    seat={seat}
-                    seatIndex={i}
-                    isDealer={Number(view.dealerSeat) === i}
-                    isActing={view.actingSeat !== undefined && Number(view.actingSeat) === i}
-                    isMe={myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText}
-                    joining={joiningSeat === i}
-                    canJoin={mySeatIndex === -1 && joiningSeat === null}
-                    timerProgress={timerProgress}
-                    unit={unit}
-                    betDir={{ x: pos.dirX, y: pos.dirY }}
-                    onJoin={() => handleJoinSeat(i)}
-                  />
-                </div>
-              );
-            })}
+            {(() => {
+              // On mobile, once you're seated, empty seats are just
+              // clutter -- there's no reason to reserve room for 5 empty
+              // circles when only 2-3 people are playing, and it's what
+              // was crowding pot pills/phase text into the seats around
+              // them. Newcomers deciding where to sit still see all 8 (an
+              // empty seat is how they join a specific one), and desktop
+              // always shows all 8 regardless -- there's room to spare.
+              const hideEmpty = isCompact && mySeatIndex >= 0;
+              const entries = view.seats
+                .map((seat, i) => ({ seat, i }))
+                .filter(({ seat }) => !hideEmpty || seat.occupant);
+              const total = entries.length;
+              // Rotate the whole (possibly filtered) ring so the viewer's
+              // own seat always lands exactly at the bottom-center angle,
+              // closest to the bet controls -- relative (clockwise) order
+              // among the shown seats is preserved, matching standard
+              // poker-client convention. Computed as a continuous angle
+              // offset (not a discrete slot lookup) so this lands exactly
+              // at the bottom for ANY seat count, not just multiples of 4
+              // -- needed now that "total" varies with how many seats are
+              // actually shown, not just the fixed 8. Seats stay in their
+              // default order when you're not seated.
+              const myPos = entries.findIndex(({ i }) => i === mySeatIndex);
+              const angleOffset = myPos >= 0 ? Math.PI / 2 - seatAngle(myPos, total) : 0;
+              return entries.map(({ seat, i }, pos_i) => {
+                const angle = seatAngle(pos_i, total) + angleOffset;
+                const pos = seatPosition(angle, isCompact);
+                return (
+                  <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
+                    <SeatCard
+                      seat={seat}
+                      seatIndex={i}
+                      isDealer={Number(view.dealerSeat) === i}
+                      isActing={view.actingSeat !== undefined && Number(view.actingSeat) === i}
+                      isMe={myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText}
+                      joining={joiningSeat === i}
+                      canJoin={mySeatIndex === -1 && joiningSeat === null}
+                      timerProgress={timerProgress}
+                      unit={unit}
+                      betDir={{ x: pos.dirX, y: pos.dirY }}
+                      onJoin={() => handleJoinSeat(i)}
+                    />
+                  </div>
+                );
+              });
+            })()}
           </div>
 
           {mySeat && (
