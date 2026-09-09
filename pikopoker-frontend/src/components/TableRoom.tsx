@@ -21,7 +21,7 @@ interface TableRoomProps {
   onLogin: () => Promise<Identity | null>;
 }
 
-const POLL_MS = 1500;
+const POLL_MS = 700;
 const ACTION_TIMEOUT_SECONDS = 30;
 
 // Evenly spaced around the felt's ellipse -- seat 0 at the left, then
