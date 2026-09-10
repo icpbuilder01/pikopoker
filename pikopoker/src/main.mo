@@ -838,6 +838,22 @@ actor self {
           )
         )
       );
+      // 2026-09-10: real bug, found live from real money stuck on a Micro
+      // table -- this abort left `inHand` at whatever the optimistic loop
+      // above just set it to (true, for every seat that looked qualified
+      // by the top-of-function guard) without ever undoing it, since only
+      // this second, stricter check caught the problem. A solo remaining
+      // player was then stuck with inHand=true forever despite genuinely
+      // sitting in WaitingForPlayers with no hand in progress -- which
+      // made leaveTable wrongly think they were still contesting a live
+      // pot and QUEUE their leave (see leaveTable's own inHand check)
+      // instead of paying them out immediately. Nothing ever un-queues it
+      // for a solo table (finalizeQueuedLeaves only runs on a genuine
+      // Showdown->WaitingForPlayers transition, which can't happen again
+      // with fewer than 2 players), so the real PIKO buy-in sat stuck in
+      // escrow indefinitely. Reset back to a genuinely clean
+      // WaitingForPlayers here, not just the phase flag.
+      for (s in t.seats.vals()) { s.inHand := false };
       t.phase := #WaitingForPlayers;
       Map.remove(dealingTables, Nat.compare, t.id);
       return;
