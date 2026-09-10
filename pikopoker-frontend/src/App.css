@@ -829,8 +829,9 @@ section.block > *:last-child {
    felt-center's normal content is tall/wide enough relative to the whole
    felt that seats around the rim (not just their badges) can end up
    behind it. Trims felt-center itself down further, on top of the regular
-   mobile sizing above, specifically for that case. */
-@container felt (max-width: 300px) {
+   mobile sizing above, specifically for that case. Threshold matches
+   .felt-wrap's own min-width floor below (raised together, same reason). */
+@container felt (max-width: 320px) {
   .felt-center {
     gap: 4px;
   }
@@ -1193,6 +1194,10 @@ section.block > *:last-child {
   background: var(--spark-soft);
   padding: 4px 10px;
   box-shadow: 2px 2px 0 var(--hard-shadow);
+}
+
+.hand-indicator.action-bar-hand {
+  align-self: flex-start;
 }
 
 .my-seat-actions {
@@ -1704,16 +1709,19 @@ section.block > *:last-child {
 
   .felt-wrap {
     flex: 1 1 0;
-    /* Below this width the fixed-size seat cards and felt-center text (not
-       worth making container-query-responsive for one breakpoint) start
-       overlapping -- so the felt refuses to shrink past it even under
-       flex-shrink pressure. On most phones there's still room to spare and
-       it just sizes to fill the leftover space above this floor; only on
-       the very smallest screens does hitting the floor push total content
-       past the viewport, and `.table-room`'s overflow-y: auto (a safety
-       net, not a designed state) picks up the small resulting scroll
-       rather than letting anything visually collide. */
-    min-width: min(100%, 280px);
+    /* Below this width the fixed-size seat cards and felt-center text
+       start overlapping (the @container felt block further down trims
+       them, but only so far) -- so the felt refuses to shrink past it
+       even under flex-shrink pressure. On most phones there's still room
+       to spare and it just sizes to fill the leftover space above this
+       floor; only on the very smallest screens does hitting the floor
+       push total content past the viewport, and `.table-room`'s
+       overflow-y: auto (a safety net, not a designed state) picks up the
+       small resulting scroll rather than letting anything visually
+       collide. Raised 280 -> 300 (the dev asked for a bigger table) --
+       @container felt's own threshold below is raised to match, so the
+       same overlap protection still kicks in at the new floor size. */
+    min-width: min(100%, 300px);
     width: auto;
     max-width: 100%;
     align-self: center;
