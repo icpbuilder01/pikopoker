@@ -42,6 +42,39 @@ function App() {
     });
   }, []);
 
+  // 2026-09-10/11: real bug, two symptoms from the same root cause,
+  // reported live in that order. `.page.in-table` was pinned to 100dvh
+  // first -- recalculates live as the mobile browser's own chrome shows/
+  // hides, which made the table visibly jump size mid-scroll (fixed by
+  // switching to 100svh, always sized as if chrome is fully shown). But
+  // 100svh is a static WORST CASE -- whenever the chrome actually *is*
+  // hidden (the common case once a phone's browser has settled after any
+  // scroll/interaction), the real viewport is taller than 100svh, and
+  // that whole gap just sits unused below the table -- confirmed via a
+  // real phone screenshot showing a large empty area under the action
+  // bar's buttons. Neither static unit is right: dvh recalculates too
+  // eagerly (mid-transition, causing visible resize), svh never
+  // recalculates at all (leaving the gap once chrome settles hidden).
+  // The standard fix for exactly this class of problem: read the real
+  // `window.innerHeight` via JS instead of a CSS viewport unit, but only
+  // on the browser's own `resize` event -- which mobile browsers fire
+  // once chrome finishes showing/hiding (a settled value), not
+  // continuously during the hide/show animation the way `dvh` does. So
+  // this tracks the *real* available height (no wasted gap) without
+  // reintroducing a live mid-scroll jump (no continuous updates).
+  useEffect(() => {
+    function setAppHeight() {
+      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    }
+    setAppHeight();
+    window.addEventListener("resize", setAppHeight);
+    window.addEventListener("orientationchange", setAppHeight);
+    return () => {
+      window.removeEventListener("resize", setAppHeight);
+      window.removeEventListener("orientationchange", setAppHeight);
+    };
+  }, []);
+
   const refreshBalance = useCallback(async (id: Identity) => {
     try {
       const ledger = getLedgerActor();
