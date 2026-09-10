@@ -1641,16 +1641,31 @@ section.block > *:last-child {
      Rather than hand-tuning a fixed felt size per breakpoint (fragile --
      the felt's actual available space depends on how tall the action bar
      ends up, which varies with phase/whether it's your turn), the table
-     room becomes a column flexbox pinned to the real viewport height
-     (100dvh, which already accounts for mobile browser chrome showing/
-     hiding): every functional block (header row, stack bar, action bar)
-     keeps its natural size, and only the felt -- purely decorative --
-     flexes to absorb whatever space is left. That guarantees the controls
-     you actually tap are always fully visible; only the table's own size
+     room becomes a column flexbox pinned to the viewport height: every
+     functional block (header row, stack bar, action bar) keeps its
+     natural size, and only the felt -- purely decorative -- flexes to
+     absorb whatever space is left. That guarantees the controls you
+     actually tap are always fully visible; only the table's own size
      adapts to the device. `.table-room` keeps `overflow-y: auto` as a
      last-resort safety net (never a designed state) in case some
      combination of phase text/seats genuinely can't fit even the
-     functional chrome on a very small device. */
+     functional chrome on a very small device.
+
+     2026-09-10, real bug from a phone video the dev sent: this used to be
+     100dvh ("dynamic viewport height", recalculates live as the mobile
+     browser's own URL bar shows/hides). That sounded like a feature --
+     always know the *actual* visible height -- but it backfires visibly:
+     any tiny scroll (even the `overflow-y: auto` safety net kicking in by
+     a few px) makes the browser chrome auto-hide, which grows 100dvh,
+     which grows the felt, which can remove the overflow that caused the
+     scroll in the first place -- the whole table visibly jumps size
+     during/after a scroll, exactly what got reported as "changes size
+     when scrolling." `100svh` ("small viewport height") instead always
+     sizes for the smallest the viewport can be (chrome fully shown) --
+     slightly less usable height in exchange for a height that never
+     moves, so the felt can never live-resize out from under the player
+     and scrolling (if the safety net ever engages) can't itself trigger
+     more resizing. */
   .page {
     padding: 12px 10px 20px;
   }
@@ -1658,7 +1673,7 @@ section.block > *:last-child {
   .page.in-table {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
+    height: 100svh;
     padding-bottom: 8px;
     overflow: hidden;
   }
