@@ -72,20 +72,21 @@ export function SeatCard({
   if (seat.hasFolded) classes.push("folded");
   if (isMe) classes.push("me");
 
+  const timerBar = timerProgress !== undefined && (
+    <div className="seat-timer-bar" style={{ width: `${Math.max(0, Math.min(1, timerProgress)) * 100}%` }} />
+  );
+
   return (
     <div className={classes.join(" ")}>
-      {isActing && timerProgress !== undefined && (
-        <div className={`seat-timer-track${flip ? " flip" : ""}`}>
-          <div className="seat-timer-bar" style={{ width: `${Math.max(0, Math.min(1, timerProgress)) * 100}%` }} />
-        </div>
-      )}
+      {isActing && timerProgress !== undefined && !flip && <div className="seat-timer-track">{timerBar}</div>}
       {isDealer && (
-        // A direct child of .seat-card (like .seat-timer-track above), not
-        // nested inside the small .seat-avatar -- flipping needs to clear
-        // the *whole* card (cards + name pill too), not just the avatar's
-        // own ~40px, or it barely moves and still collides with whatever's
-        // above the seat (the felt-center phase/pot/result text, for the
-        // viewer's own seat -- see badgesFlip()'s own comment).
+        // A direct child of .seat-card, not nested inside the small
+        // .seat-avatar -- see badgesFlip()'s own comment for why the
+        // flipped case needs to clear more than the avatar's ~40px. Bigger
+        // hole cards (see the mobile-card-size entry) made the flipped-
+        // below position tall enough to occasionally push past the felt's
+        // *own* bottom rail on a short-enough felt -- side-anchored here
+        // instead, which is independent of the card's height entirely.
         <span className={`dealer-button${flip ? " flip" : ""}`} title="Dealer">
           D
         </span>
@@ -126,6 +127,18 @@ export function SeatCard({
           {unit === "PIKO" ? <PikoIcon size={11} /> : <span className="chip-dot" />}
           {formatPiko(seat.committedThisRound)}
         </div>
+      )}
+      {isActing && flip && (
+        // Rendered in normal flow here instead of absolutely positioned
+        // above/below the card (see badgesFlip()'s comment) -- a floated
+        // position tall/short enough to clear both the felt-center content
+        // above and the felt's own bottom rail below turned out not to
+        // exist reliably once hole cards got bigger on some real devices.
+        // Taking up its own real space in the card guarantees it never
+        // overlaps anything else, at the cost of the card growing a few
+        // px taller for the one seat (yours) that's always in the tightest
+        // spot on the felt.
+        <div className="seat-timer-track inline">{timerBar}</div>
       )}
     </div>
   );
