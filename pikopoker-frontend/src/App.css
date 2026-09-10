@@ -1846,50 +1846,42 @@ section.block > *:last-child {
      the same time, `aspect-ratio` has nothing left to compute and gets
      silently ignored, so the felt stretched into a badly distorted
      shape (confirmed via screenshot -- seats landed nowhere near the
-     felt's actual rendered edge, since seatPosition()'s rx/ry percentages
-     assume the declared 3/4 ratio actually holds).
+     felt's actual rendered edge). A second attempt used `container-type:
+     size` on this slot plus `cqh` container query units on `.felt-wrap`
+     to compute a ratio-correct size in pure CSS -- looked right in every
+     local (desktop-Chrome, Playwright) check, but broke badly on a real
+     phone (the felt rendered oversized, overlapping the header above
+     it) -- a real engine-specific rough edge with `container-type: size`
+     on a flex-grow item that never reproduced locally, not worth
+     continuing to chase blind on hardware unavailable here.
 
-     Fixed by splitting the sizing role across two elements instead of
-     asking one element to do both jobs at once. `.felt-slot` (the new
-     wrapper) is the one that's actually flex-grown, claiming the
-     leftover vertical space, AND declares `container-type: size` --
-     letting `.felt-wrap` inside reference the slot's own resolved
-     HEIGHT directly via `cqh` container query units, something plain
-     percentages/aspect-ratio can't do across a flex axis change (a
-     percentage width can't read a sibling axis's size; `1cqh` = 1% of
-     the query container's actual height, updated live as that height
-     changes). `width: min(100%, 75cqh)` then picks whichever is
-     actually tighter -- 100% of the available WIDTH, or (since 3/4 = 0.75)
-     the widest a 3:4 box can be within the available HEIGHT -- with
-     `aspect-ratio` deriving the matching height from that chosen width
-     afterward, so the ratio is never at risk of being silently dropped
-     the way plain `width: 100%` + a flex-grown height was (that combo
-     leaves aspect-ratio nothing to compute, since both dimensions are
-     already definite from other sources -- confirmed by screenshot: the
-     felt stretched into a badly distorted shape and every seat landed
-     off the actual rendered edge, since seatPosition()'s rx/ry percentages
-     assume the declared 3/4 ratio genuinely holds). Verified both ways
-     via getBoundingClientRect(): fills the full page width with a
-     correct 4:3 height:width ratio when height is generous, and shrinks
-     down (both dimensions together, ratio intact) on a deliberately
-     short viewport (375x600) where height is the real bottleneck. */
+     Settled on a plain `ResizeObserver` in TableRoom.tsx instead,
+     measuring this slot's real rendered size and computing `.felt-wrap`'s
+     width/height as literal pixel values in JS (same "measure the real
+     thing instead of asking CSS to infer it" philosophy as the
+     `--app-height` fix) -- `feltStyle` there picks whichever of width/
+     (height * 0.75) is tighter, matching the 3:4 ratio, and sets both
+     dimensions explicitly so there's no ambiguity left for any browser
+     engine to resolve differently. This slot's only remaining job is
+     being the flex-grow leftover-space container `.felt-wrap` measures
+     against. */
   .felt-slot {
     display: flex;
     flex: 1 1 0;
     min-height: 0;
     align-items: center;
     justify-content: center;
-    container-type: size;
-    container-name: felt-slot;
   }
 
   .felt-wrap {
     /* Below this width the fixed-size seat cards and felt-center text
        start overlapping (the @container felt block further down trims
        them, but only so far) -- so the felt refuses to shrink past it
-       even under flex-shrink pressure. On most phones there's still room
-       to spare and it just sizes to fill the leftover space above this
-       floor; only on the very smallest screens does hitting the floor
+       even under flex-shrink pressure. Purely a fallback for the instant
+       before the ResizeObserver above has measured anything (or if it's
+       ever unavailable) -- once `feltStyle` sets explicit width/height
+       inline, those win over this. On most phones there's still room to
+       spare; only on the very smallest screens does hitting the floor
        push total content past the viewport, and `.table-room`'s
        overflow-y: auto (a safety net, not a designed state) picks up the
        small resulting scroll rather than letting anything visually
@@ -1897,7 +1889,7 @@ section.block > *:last-child {
        @container felt's own threshold below is raised to match, so the
        same overlap protection still kicks in at the new floor size. */
     min-width: min(100%, 300px);
-    width: min(100%, 75cqh);
+    width: 100%;
     height: auto;
     margin: 4px auto;
   }
