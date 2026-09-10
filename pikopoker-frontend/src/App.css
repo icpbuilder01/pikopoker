@@ -371,9 +371,9 @@ section.block > *:last-child {
 
 .playing-card {
   position: relative;
-  width: 78px;
-  height: 110px;
-  border-radius: 7px;
+  width: 90px;
+  height: 127px;
+  border-radius: 10px;
   background: linear-gradient(160deg, #fffdf8 0%, #f7f1e2 100%);
   border: 2px solid;
   border-top-color: var(--bevel-hi);
@@ -383,9 +383,10 @@ section.block > *:last-child {
   font-family: var(--font-display);
   font-weight: 700;
   color: #1a1508;
-  box-shadow:
-    1px 1px 0 var(--hard-shadow),
-    0 2px 4px rgba(0, 0, 0, 0.25);
+  /* Flatter, single soft shadow instead of the ledger family's usual hard-
+     offset -- cards read cleaner/more modern this way while everything
+     else keeps the beveled paper look. */
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
   animation: card-deal 0.28s ease-out;
 }
@@ -1423,6 +1424,14 @@ section.block > *:last-child {
   gap: 2px;
   padding: 8px 14px;
   min-width: 78px;
+  border-radius: 12px;
+  border: 2px solid var(--border-strong);
+  box-shadow: none;
+}
+
+.bet-preset:active:not(:disabled) {
+  transform: scale(0.96);
+  box-shadow: none;
 }
 
 .bet-preset-label {
@@ -1452,6 +1461,14 @@ section.block > *:last-child {
   margin-left: 0;
 }
 
+/* The in-hand action controls (Fold/Check/Call/Raise, quick-bet presets)
+   get a flatter, more rounded, colored-outline treatment instead of the
+   rest of the app's beveled "ledger paper" look -- the dev asked to bring
+   PikoPoker's table closer to a cleaner modern mobile-poker reference,
+   scoped to just the felt/action controls so the rest of the PIKO family's
+   shared identity (header, lobby, wallet, etc.) is untouched. Colors stay
+   on the family's existing palette (--critical/--good/--bet-pill), just
+   applied as a dark tinted fill + solid border instead of a 3D bevel. */
 .action-bar.modern .action-buttons .button {
   flex: 1;
   padding: 13px 16px;
@@ -1460,11 +1477,39 @@ section.block > *:last-child {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  border-radius: 14px;
+  border-width: 2px;
+  box-shadow: none;
+}
+
+.action-bar.modern .action-buttons .button:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
+.action-bar.modern .action-buttons .button.danger {
+  background: color-mix(in srgb, var(--critical) 22%, #1c1210 78%);
+  border-color: var(--critical);
+  color: #ffd9d2;
+}
+
+.action-bar.modern .action-buttons .button.good {
+  background: color-mix(in srgb, var(--good) 22%, #101c14 78%);
+  border-color: var(--good);
+  color: #d3f5dd;
 }
 
 .bet-cta {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--bet-pill) 30%, #17111f 70%);
+  border-radius: 14px;
+  border: 2px solid var(--bet-pill);
+  color: #ecdcff;
+  box-shadow: none;
+}
+
+.bet-cta:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: none;
 }
 
 .raise-row {
