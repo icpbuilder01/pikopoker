@@ -129,6 +129,10 @@ type ActionError =
 service : {
   adminClearPendingFunds: (target: principal) -> ();
   adminForceDealNextHand: (tableId: nat) -> ();
+  adminGetPendingPayouts: () -> (vec record {
+                                       principal;
+                                       nat;
+                                     }) query;
   adminKickSeat: (tableId: nat, seatIndex: nat) ->
    (variant {
       Err: LeaveError;
