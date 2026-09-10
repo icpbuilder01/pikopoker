@@ -953,6 +953,39 @@ actor self {
     };
   };
 
+  // 2026-09-10: extracted from tick()'s own #Showdown case (still used
+  // from there too) so `triggerDeal` below can also perform this cleanup
+  // directly, not just the backend timer. Real incident: the timer
+  // freezing (see drawCard's own comment on the still-not-fully-
+  // root-caused cause) left a table stuck showing "Showdown complete"
+  // forever with no recovery path at all -- the frontend's periodic
+  // `triggerDeal` nudge only fires while `phase == WaitingForPlayers`
+  // (this cleanup is exactly what's needed to ever REACH that phase from
+  // Showdown), so a frozen timer during Showdown had genuinely no way
+  // back, timer bug or not. Reusing the proven-reliable "ordinary
+  // client-initiated update call" path here means a frozen timer no
+  // longer permanently strands a table -- it becomes at most a few
+  // seconds' delay until some seated client's next nudge lands, same
+  // safety margin as the existing WaitingForPlayers->dealt nudge.
+  func maybeCleanupShowdown(t : Types.Table) : async* () {
+    if (t.phase != #Showdown) { return };
+    let at = switch (t.nextHandAt) { case (?at) { at }; case null { return } };
+    if (Time.now() < at) { return };
+    for (s in t.seats.vals()) {
+      s.inHand := false;
+      s.hasFolded := false;
+      s.isAllIn := false;
+      s.committedThisHand := 0;
+      s.committedThisRound := 0;
+      if (s.stack == 0 and s.occupant != null) { s.sittingOut := true };
+    };
+    t.board := [];
+    t.lastResult := null;
+    t.phase := #WaitingForPlayers;
+    t.nextHandAt := null;
+    await* finalizeQueuedLeaves(t);
+  };
+
   // 2026-09-09: every caller below routes THROUGH this public method (a
   // genuine self-call via `self.triggerDeal(...)`, a real inter-canister
   // round trip) instead of calling `maybeDealNow`/`dealNextHand` directly
@@ -968,9 +1001,20 @@ actor self {
   // permission gate (unlike adminForceDealNextHand) -- safe for anyone to
   // call, since dealNextHand's own guards make it a no-op unless the table
   // genuinely needs dealing.
+  //
+  // 2026-09-10: also runs the Showdown->WaitingForPlayers cleanup first
+  // (see maybeCleanupShowdown's own comment) -- a table stuck at
+  // "Showdown complete" only has a path back to WaitingForPlayers via
+  // that cleanup, and the frontend's periodic nudge only fires once
+  // phase IS WaitingForPlayers, so without this, a frozen backend timer
+  // during Showdown had no recovery route at all. Both steps share this
+  // one client-proven-reliable call.
   public shared func triggerDeal(tableId : Nat) : async () {
     switch (Map.get(tables, Nat.compare, tableId)) {
-      case (?t) { await* maybeDealNow(t) };
+      case (?t) {
+        await* maybeCleanupShowdown(t);
+        await* maybeDealNow(t);
+      };
       case null {};
     };
   };
@@ -1304,46 +1348,18 @@ actor self {
           await* maybeDealNow(t);
         };
         case (#Showdown) {
-          switch (t.nextHandAt) {
-            case (?at) {
-              if (Time.now() >= at) {
-                for (s in t.seats.vals()) {
-                  s.inHand := false;
-                  s.hasFolded := false;
-                  s.isAllIn := false;
-                  s.committedThisHand := 0;
-                  s.committedThisRound := 0;
-                  // A stack emptied by the last hand sits out until topped up.
-                  if (s.stack == 0 and s.occupant != null) { s.sittingOut := true };
-                };
-                // 2026-09-10: real bug, reported live -- the board and
-                // result text from the finished hand were never cleared
-                // here, so an empty or not-yet-dealt table kept showing
-                // the previous hand's board cards and "Showdown complete"
-                // indefinitely. dealNextHand does reset these, but only
-                // once a *new* hand actually starts -- a table can sit in
-                // WaitingForPlayers for a while first (no one seated yet,
-                // or seated but not dealt), during which the stale state
-                // was visible the whole time.
-                t.board := [];
-                t.lastResult := null;
-                t.phase := #WaitingForPlayers;
-                t.nextHandAt := null;
-                // 2026-09-10: bracketed with logs while hunting the
-                // recurring "tick() dies completely" incident (see
-                // drawCard's own comment) -- this is the one other real
-                // await left in tick()'s synchronous sweep over every
-                // table, so if the timer ever freezes again, whether the
-                // "done" line below is the last thing logged (or is
-                // missing entirely) narrows this branch in or out fast,
-                // instead of guessing blind again.
-                Debug.print("tick: Showdown cleanup, table=" # debug_show (t.id) # " handNumber=" # debug_show (t.handNumber));
-                await* finalizeQueuedLeaves(t);
-                Debug.print("tick: Showdown cleanup done, table=" # debug_show (t.id));
-              };
-            };
-            case null {};
-          };
+          // 2026-09-10: bracketed with logs while hunting the recurring
+          // "tick() dies completely" incident (see drawCard's own
+          // comment) -- if the timer ever freezes again, whether the
+          // "done" line below is the last thing logged (or is missing
+          // entirely) narrows this branch in or out fast, instead of
+          // guessing blind again. The cleanup itself now lives in
+          // maybeCleanupShowdown (shared with triggerDeal -- see its own
+          // comment on why a client-callable path to this same cleanup
+          // matters, independent of whether the timer itself is healthy).
+          Debug.print("tick: Showdown cleanup, table=" # debug_show (t.id) # " handNumber=" # debug_show (t.handNumber));
+          await* maybeCleanupShowdown(t);
+          Debug.print("tick: Showdown cleanup done, table=" # debug_show (t.id));
         };
         case (_) {
           switch (t.actionDeadline) {
