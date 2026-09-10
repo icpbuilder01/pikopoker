@@ -1432,6 +1432,17 @@ section.block > *:last-child {
     height: 42px;
   }
 
+  /* Your own hole cards get to be bigger than everyone else's on mobile --
+     your seat is always bottom-center now (see the seat-rotation entry)
+     with open felt below it, not squeezed against neighbors the way a
+     side seat is, so there's real room to spend here. the dev asked for
+     this directly; opponents' (still-tiny, face-down or shown at
+     showdown) cards are untouched. */
+  .seat-card.me .playing-card.small {
+    width: 46px;
+    height: 65px;
+  }
+
   .playing-card-corner {
     font-size: 0.8rem;
   }
@@ -1440,12 +1451,20 @@ section.block > *:last-child {
     font-size: 0.53rem;
   }
 
+  .seat-card.me .playing-card.small .playing-card-corner {
+    font-size: 0.72rem;
+  }
+
   .playing-card-pip {
     font-size: 1.97rem;
   }
 
   .playing-card.small .playing-card-pip {
     font-size: 1.17rem;
+  }
+
+  .seat-card.me .playing-card.small .playing-card-pip {
+    font-size: 1.65rem;
   }
 
   .seat-card {
