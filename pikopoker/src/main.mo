@@ -8,6 +8,7 @@ import Time "mo:core/Time";
 import Timer "mo:core/Timer";
 import Map "mo:core/Map";
 import Array "mo:core/Array";
+import Iter "mo:core/Iter";
 import VarArray "mo:core/VarArray";
 import Runtime "mo:core/Runtime";
 import Debug "mo:core/Debug";
@@ -618,6 +619,19 @@ actor self {
       case (#Ok(_)) { t.seats[seatIndex].stack += amount; #Ok(()) };
       case (#Err(e)) { #Err(#TransferFailed(e)) };
     };
+  };
+
+  // 2026-09-10: controller-only diagnostic, added after a real incident --
+  // a player's leave-payout icrc1_transfer failed (most likely a transient
+  // cycles shortage during that day's several top-up incidents) and sat in
+  // `pendingPayouts` until they self-served it via `claimPendingPayout`.
+  // That flow already worked correctly (it's the intended safety net, not
+  // a bug), but there was no way to directly check whether any OTHER
+  // principal has funds stuck the same way without asking every player --
+  // this makes that checkable on demand instead of guessing.
+  public query ({ caller }) func adminGetPendingPayouts() : async [(Principal, Nat)] {
+    requireController(caller);
+    Iter.toArray(Map.entries(pendingPayouts));
   };
 
   public shared ({ caller }) func claimPendingPayout() : async Types.TransferResult {
