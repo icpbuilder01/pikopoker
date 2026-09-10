@@ -721,6 +721,16 @@ section.block > *:last-child {
   align-items: center;
 }
 
+/* Outer sizing box for the felt -- exists so mobile can size the felt to
+   BOTH fill the available width AND preserve its aspect ratio without
+   overflowing the leftover vertical space (see the mobile override
+   below for why this needs its own element). `display: contents` on
+   desktop means it has zero effect there -- `.felt-wrap` sizes itself
+   directly as before. */
+.felt-slot {
+  display: contents;
+}
+
 .felt-wrap {
   position: relative;
   width: 100%;
@@ -1632,6 +1642,34 @@ section.block > *:last-child {
     height: 42px;
   }
 
+  /* 2026-09-11: real bug, confirmed via measurement -- with 7-8 seats
+     occupied, the two seats sitting exactly left/right of center (see
+     TableRoom.tsx's own comment on `many-seats` for the geometry) landed
+     at the same height as the community board, and the board's normal
+     (54x76) card size reached far enough to genuinely overlap them
+     (~40px of real rectangle overlap, not a near-miss). Desktop never
+     gets this class (plenty of horizontal room there regardless of seat
+     count), and every other mobile seat count keeps the normal board
+     size -- this only kicks in for the specific case that measured out
+     as broken. */
+  .felt-wrap.many-seats .felt-board {
+    gap: 2px;
+  }
+
+  .felt-wrap.many-seats .felt-board .playing-card {
+    width: 30px;
+    height: 42px;
+    border-radius: 4px;
+  }
+
+  .felt-wrap.many-seats .felt-board .playing-card-corner {
+    font-size: 0.5rem;
+  }
+
+  .felt-wrap.many-seats .felt-board .playing-card-pip {
+    font-size: 1.1rem;
+  }
+
   /* Your own hole cards get to be bigger than everyone else's on mobile --
      your seat is always bottom-center now (see the seat-rotation entry)
      with open felt below it, not squeezed against neighbors the way a
@@ -1747,7 +1785,7 @@ section.block > *:last-child {
   .page.in-table {
     display: flex;
     flex-direction: column;
-    height: 100svh;
+    height: var(--app-height, 100svh);
     padding-bottom: 8px;
     overflow: hidden;
   }
@@ -1796,8 +1834,56 @@ section.block > *:last-child {
     font-size: 0.95rem;
   }
 
-  .felt-wrap {
+  /* 2026-09-11, real bug from two phone screenshots: the felt used to be
+     flex-sized directly (flex: 1 1 0 on .felt-wrap itself, with a fixed
+     aspect-ratio) -- which only ever let its HEIGHT track the leftover
+     space, so its WIDTH (derived from that height via the 3/4 ratio)
+     routinely fell well short of the actual page width, leaving visibly
+     wasted margin on both sides that the dev asked to be filled ("elargis
+     la pour que ça alle jusqu au bord en largeur"). Tried giving
+     `.felt-wrap` `width: 100%` directly first -- broke immediately: with
+     BOTH width (now explicit) and height (still flex-grown) definite at
+     the same time, `aspect-ratio` has nothing left to compute and gets
+     silently ignored, so the felt stretched into a badly distorted
+     shape (confirmed via screenshot -- seats landed nowhere near the
+     felt's actual rendered edge, since seatPosition()'s rx/ry percentages
+     assume the declared 3/4 ratio actually holds).
+
+     Fixed by splitting the sizing role across two elements instead of
+     asking one element to do both jobs at once. `.felt-slot` (the new
+     wrapper) is the one that's actually flex-grown, claiming the
+     leftover vertical space, AND declares `container-type: size` --
+     letting `.felt-wrap` inside reference the slot's own resolved
+     HEIGHT directly via `cqh` container query units, something plain
+     percentages/aspect-ratio can't do across a flex axis change (a
+     percentage width can't read a sibling axis's size; `1cqh` = 1% of
+     the query container's actual height, updated live as that height
+     changes). `width: min(100%, 75cqh)` then picks whichever is
+     actually tighter -- 100% of the available WIDTH, or (since 3/4 = 0.75)
+     the widest a 3:4 box can be within the available HEIGHT -- with
+     `aspect-ratio` deriving the matching height from that chosen width
+     afterward, so the ratio is never at risk of being silently dropped
+     the way plain `width: 100%` + a flex-grown height was (that combo
+     leaves aspect-ratio nothing to compute, since both dimensions are
+     already definite from other sources -- confirmed by screenshot: the
+     felt stretched into a badly distorted shape and every seat landed
+     off the actual rendered edge, since seatPosition()'s rx/ry percentages
+     assume the declared 3/4 ratio genuinely holds). Verified both ways
+     via getBoundingClientRect(): fills the full page width with a
+     correct 4:3 height:width ratio when height is generous, and shrinks
+     down (both dimensions together, ratio intact) on a deliberately
+     short viewport (375x600) where height is the real bottleneck. */
+  .felt-slot {
+    display: flex;
     flex: 1 1 0;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    container-type: size;
+    container-name: felt-slot;
+  }
+
+  .felt-wrap {
     /* Below this width the fixed-size seat cards and felt-center text
        start overlapping (the @container felt block further down trims
        them, but only so far) -- so the felt refuses to shrink past it
@@ -1811,9 +1897,8 @@ section.block > *:last-child {
        @container felt's own threshold below is raised to match, so the
        same overlap protection still kicks in at the new floor size. */
     min-width: min(100%, 300px);
-    width: auto;
-    max-width: 100%;
-    align-self: center;
+    width: min(100%, 75cqh);
+    height: auto;
     margin: 4px auto;
   }
 

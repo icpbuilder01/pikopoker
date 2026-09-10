@@ -670,8 +670,27 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
       {view && (
         <>
-          <div className="felt-wrap">
-            <div className="felt" />
+          {/* 2026-09-11: real bug, confirmed via measurement -- with 7-8
+              seats occupied, the two seats sitting exactly left/right of
+              center (angle 0/180, so sin(angle)=0 -- no vertical offset
+              from seatPosition()'s ry at all) land at the exact same
+              height as the community-board row, and the board's own
+              natural width (5 cards, not clipped by felt-center's
+              narrower declared width) reached far enough to genuinely
+              overlap those two seats' name-pill/card area (~40px of real
+              rectangle overlap, not just a near-miss). Only matters at
+              high occupied-seat counts -- fewer players never put a seat
+              exactly on that horizontal line while the board is also
+              full width, and widening the felt to fill mobile screens
+              (see the felt-slot entry) made this worse by triggering the
+              existing @container felt small-felt protection less often.
+              The "many-seats" class shrinks just the board cards
+              specifically for this case, scoped to occupied-seat count,
+              not felt size -- a seat-count problem, not a narrow-felt
+              one. */}
+          <div className="felt-slot">
+            <div className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}>
+              <div className="felt" />
             <div className="felt-center">
               <span className="felt-phase">
                 {phaseLabel(view.phase)} &middot; Hand #{view.handNumber.toString()}
@@ -763,6 +782,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                 );
               });
             })()}
+            </div>
           </div>
 
           {mySeat && (
