@@ -12,6 +12,7 @@ import { Confetti } from "./Confetti";
 import { Rules } from "./Rules";
 import { QrCode } from "./QrCode";
 import { Phase, LeaveError, type ActionError, type JoinError, type TableView } from "../bindings/pikopoker/pikopoker";
+import { isMuted, playCardSound, playChipSound, playFoldSound, playWinSound, setMuted } from "../lib/sound";
 
 interface TableRoomProps {
   tableId: bigint;
@@ -149,6 +150,8 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
+  const prevSoundViewRef = useRef<TableView | null>(null);
+  const [muted, setMutedState] = useState(() => isMuted());
 
   const refresh = useCallback(async () => {
     try {
@@ -199,10 +202,31 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       seat.stack > prevStackRef.current
     ) {
       setConfettiTrigger((n) => n + 1);
+      playWinSound();
     }
     prevStackRef.current = seat.stack;
     prevResultRef.current = view.lastResult;
   }, [view, myPrincipalText]);
+
+  // Sound cues, driven purely by observing what changed between polls --
+  // works the same whether it was my action or an opponent's, with no need
+  // to hook every individual action handler. Skipped on the very first
+  // view (nothing "changed" yet, would otherwise fire a sound barrage the
+  // moment the table loads).
+  useEffect(() => {
+    if (!view) return;
+    const prev = prevSoundViewRef.current;
+    if (prev) {
+      if (view.handNumber !== prev.handNumber) playCardSound(2);
+      if (view.board.length > prev.board.length) playCardSound(view.board.length - prev.board.length);
+      const committedNow = view.seats.reduce((sum, s) => sum + s.committedThisRound, 0n);
+      const committedBefore = prev.seats.reduce((sum, s) => sum + s.committedThisRound, 0n);
+      if (committedNow > committedBefore) playChipSound();
+      const newlyFolded = view.seats.some((s, i) => s.hasFolded && !prev.seats[i]?.hasFolded);
+      if (newlyFolded) playFoldSound();
+    }
+    prevSoundViewRef.current = view;
+  }, [view]);
   const mySeatIndex = view
     ? view.seats.findIndex((s) => myPrincipalText !== null && s.occupant?.toText() === myPrincipalText)
     : -1;
@@ -497,6 +521,16 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
           )}
         </div>
         <div className="table-room-header-actions">
+          <button
+            className="button secondary small"
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              setMutedState(next);
+            }}
+          >
+            {muted ? "Sound: Off" : "Sound: On"}
+          </button>
           <button className="button secondary small" onClick={() => setShowRules(true)}>
             Rules
           </button>
@@ -549,7 +583,10 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                 ))}
               </div>
               {view.pots.length > 0 && (
-                <div className="felt-pots">
+                // Keyed by the total so the whole block remounts -- and its
+                // CSS entrance animation replays -- every time the pot
+                // actually grows, a small "chips landing" cue.
+                <div className="felt-pots" key={potTotal.toString()}>
                   {view.pots.map((pot, i) => (
                     <span
                       className="felt-pot"
