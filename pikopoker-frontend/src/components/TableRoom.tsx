@@ -3,15 +3,22 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { getLedgerActor, getPikopokerActor } from "../lib/actors";
 import { pikopokerCanisterId, frontendUrl } from "../lib/canister-env";
-import { formatPiko, parseAmount } from "../lib/format";
-import { handLabel } from "../lib/handEval";
+import { formatPiko, parseAmount, shortPrincipal } from "../lib/format";
+import { compareHandScore, evaluateBest, handLabel, labelForScore } from "../lib/handEval";
 import { PlayingCard } from "./PlayingCard";
 import { SeatCard } from "./SeatCard";
 import { ChipAmount } from "./ChipAmount";
 import { Confetti } from "./Confetti";
 import { Rules } from "./Rules";
 import { QrCode } from "./QrCode";
-import { Phase, LeaveError, type ActionError, type JoinError, type TableView } from "../bindings/pikopoker/pikopoker";
+import {
+  Phase,
+  LeaveError,
+  type ActionError,
+  type JoinError,
+  type SeatView,
+  type TableView,
+} from "../bindings/pikopoker/pikopoker";
 import { isMuted, playCardSound, playChipSound, playFoldSound, playWinSound, setMuted } from "../lib/sound";
 
 interface TableRoomProps {
@@ -71,6 +78,49 @@ function phaseLabel(p: Phase): string {
     default:
       return p;
   }
+}
+
+// The backend's lastResult is just "Won uncontested"/"Showdown complete" --
+// no winner or hand, since it's meant as a human-facing status string, not
+// structured data. Hole cards ARE revealed to every viewer once phase is
+// Showdown though (backend redacts by phase, not by outcome -- see
+// seatView's revealCards in main.mo), including for an uncontested win, so
+// there's enough here to work out who actually won and show it, purely
+// client-side. Reused from a single seat's card comparison hook already
+// used for the "what do I have" indicator, but with the full kicker-aware
+// scorer (see handEval.ts's own comment) since this needs to agree with
+// how the backend really settles the pot, not just label a category.
+function showdownSummary(view: TableView, myPrincipalText: string | null): string | null {
+  if (view.phase !== Phase.Showdown) return null;
+  const contestants = view.seats.filter((s) => s.inHand && !s.hasFolded && s.holeCards);
+  if (contestants.length === 0) return null;
+
+  const nameFor = (s: SeatView) => {
+    const text = s.occupant?.toText();
+    if (!text) return "?";
+    return text === myPrincipalText ? "You" : shortPrincipal(text);
+  };
+
+  if (contestants.length === 1) {
+    const s = contestants[0];
+    const label = handLabel(s.holeCards, view.board);
+    return label ? `${nameFor(s)} won uncontested with ${label}` : `${nameFor(s)} won uncontested`;
+  }
+
+  const board = Array.from(view.board);
+  const scored = contestants
+    .map((s) => ({ s, score: evaluateBest([...s.holeCards!, ...board]) }))
+    .filter((x): x is { s: SeatView; score: NonNullable<typeof x.score> } => x.score !== null);
+  if (scored.length === 0) return null;
+
+  let best = scored[0].score;
+  for (const x of scored) {
+    if (compareHandScore(x.score, best) > 0) best = x.score;
+  }
+  const winners = scored.filter((x) => compareHandScore(x.score, best) === 0);
+  const label = labelForScore(best);
+  const names = winners.map((w) => nameFor(w.s)).join(" & ");
+  return winners.length > 1 ? `${names} split it with ${label}` : `${names} won with ${label}`;
 }
 
 function joinErrorMessage(err: JoinError): string {
@@ -638,7 +688,10 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                   ))}
                 </div>
               )}
-              {view.lastResult && <span className="felt-result">{view.lastResult}</span>}
+              {(() => {
+                const result = showdownSummary(view, myPrincipalText) ?? view.lastResult;
+                return result ? <span className="felt-result">{result}</span> : null;
+              })()}
             </div>
 
             {(() => {
@@ -744,6 +797,15 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
           {isMyTurn && mySeat && (
             <div className="action-bar modern">
+              {myHandLabel && (
+                // Was only shown in the "Your stack" bar, which is hidden
+                // on mobile specifically while this action bar is showing
+                // (see .my-seat-bar's own comment) -- meaning "what do I
+                // have" disappeared at exactly the moment it matters most,
+                // deciding whether to bet. Shown here too so it stays
+                // visible through your whole turn.
+                <span className="hand-indicator action-bar-hand">{myHandLabel}</span>
+              )}
               <div className="bet-info-row">
                 <div className="bet-info-tile">
                   <span className="bet-info-label">Pot</span>
