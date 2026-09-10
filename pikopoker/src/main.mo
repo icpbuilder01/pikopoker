@@ -319,7 +319,13 @@ actor self {
     if (Principal.isAnonymous(caller)) { return #Err(#Anonymous) };
     let trimmedName = Text.trim(name, #predicate(func(c) { c == ' ' }));
     if (Text.size(trimmedName) == 0 or Text.size(trimmedName) > 32) { return #Err(#InvalidName) };
-    if (buyIn < 10_000_000_000 or buyIn > 100_000_000_000_000) { return #Err(#InvalidBuyIn) }; // 100 PIKO .. 1,000,000 PIKO
+    // 0 is the play-money sentinel (see FREE_CHIPS/Free Play's own comment)
+    // -- the dev asked directly for private tables to support this too, so
+    // friends can play a private free game together, not just real-money
+    // ones. Any other out-of-range amount is still rejected.
+    if (buyIn != 0 and (buyIn < 10_000_000_000 or buyIn > 100_000_000_000_000)) {
+      return #Err(#InvalidBuyIn); // 100 PIKO .. 1,000,000 PIKO
+    };
     let id = nextTableId;
     nextTableId += 1;
     var code = randomCode(id * 7919 + Int.abs(Time.now()) % 1_000_000);
@@ -327,8 +333,10 @@ actor self {
     while (Map.get(privateCodes, Text.compare, code) != null) {
       code #= "x";
     };
-    let sb = buyIn / 200;
-    let bb = buyIn / 100;
+    // A free table's blinds are derived from FREE_CHIPS (the complimentary
+    // stack every seat gets), not from buyIn=0 itself -- same convention
+    // createFreeTable already uses for the public Free Play table.
+    let (sb, bb) = if (buyIn == 0) { (FREE_CHIPS / 200, FREE_CHIPS / 100) } else { (buyIn / 200, buyIn / 100) };
     Map.add(tables, Nat.compare, id, newTable(id, trimmedName, #Private({ code }), buyIn, sb, bb));
     Map.add(privateCodes, Text.compare, code, id);
     #Ok({ id; code });
