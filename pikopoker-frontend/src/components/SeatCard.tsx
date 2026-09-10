@@ -114,7 +114,15 @@ export function SeatCard({
         {seat.hasFolded && <span className="seat-tag">FOLDED</span>}
       </div>
       {seat.committedThisRound > 0n && (
-        <div className="chip-badge" style={{ transform: `translate(${betDir.x * 16}px, ${betDir.y * 14}px)` }}>
+        <div
+          className="chip-badge"
+          key={seat.committedThisRound.toString()}
+          style={{
+            // @ts-expect-error custom properties read by the keyframe in App.css
+            "--bet-x": `${betDir.x * 16}px`,
+            "--bet-y": `${betDir.y * 14}px`,
+          }}
+        >
           {unit === "PIKO" ? <PikoIcon size={11} /> : <span className="chip-dot" />}
           {formatPiko(seat.committedThisRound)}
         </div>

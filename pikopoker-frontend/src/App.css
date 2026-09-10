@@ -774,6 +774,24 @@ section.block > *:last-child {
   gap: 6px;
   flex-wrap: wrap;
   justify-content: center;
+  animation: pot-grow 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes pot-grow {
+  from {
+    transform: scale(0.85);
+    opacity: 0.4;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .felt-pots {
+    animation: none;
+  }
 }
 
 .felt-pot {
@@ -1027,6 +1045,25 @@ section.block > *:last-child {
   border-radius: 999px;
   margin-top: 3px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transform: translate(var(--bet-x), var(--bet-y));
+  animation: chip-drop 0.24s ease-out;
+}
+
+@keyframes chip-drop {
+  from {
+    transform: translate(var(--bet-x), var(--bet-y)) scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: translate(var(--bet-x), var(--bet-y)) scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-badge {
+    animation: none;
+  }
 }
 
 .chip-dot {
