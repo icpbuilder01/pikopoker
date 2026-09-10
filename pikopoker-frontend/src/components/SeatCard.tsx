@@ -20,6 +20,18 @@ interface SeatCardProps {
   onJoin: () => void;
 }
 
+// betDir points from this seat toward the felt's center. A negative y means
+// the center is *above* this seat, i.e. the seat itself sits in the bottom
+// half of the felt -- true for the viewer's own seat every time, now that
+// it's always rotated to bottom-center. The dealer badge and action timer
+// normally perch above the seat card, which is fine when there's open felt
+// above them, but for a bottom seat that space is the felt-center content
+// (phase/pot/result text) instead -- flipping them below the seat card
+// there avoids the collision.
+function badgesFlip(betDir: { y: number }): boolean {
+  return betDir.y < 0;
+}
+
 function principalHue(text: string): number {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) % 360;
@@ -54,6 +66,7 @@ export function SeatCard({
   }
 
   const principalText = seat.occupant.toText();
+  const flip = badgesFlip(betDir);
   const classes = ["seat-card"];
   if (isActing) classes.push("acting");
   if (seat.hasFolded) classes.push("folded");
@@ -62,13 +75,23 @@ export function SeatCard({
   return (
     <div className={classes.join(" ")}>
       {isActing && timerProgress !== undefined && (
-        <div className="seat-timer-track">
+        <div className={`seat-timer-track${flip ? " flip" : ""}`}>
           <div className="seat-timer-bar" style={{ width: `${Math.max(0, Math.min(1, timerProgress)) * 100}%` }} />
         </div>
       )}
+      {isDealer && (
+        // A direct child of .seat-card (like .seat-timer-track above), not
+        // nested inside the small .seat-avatar -- flipping needs to clear
+        // the *whole* card (cards + name pill too), not just the avatar's
+        // own ~40px, or it barely moves and still collides with whatever's
+        // above the seat (the felt-center phase/pot/result text, for the
+        // viewer's own seat -- see badgesFlip()'s own comment).
+        <span className={`dealer-button${flip ? " flip" : ""}`} title="Dealer">
+          D
+        </span>
+      )}
       <div className="seat-identity">
         <span className="seat-avatar" style={{ background: `hsl(${principalHue(principalText)} 55% 40%)` }}>
-          {isDealer && <span className="dealer-button" title="Dealer">D</span>}
           {principalText.slice(0, 2).toUpperCase()}
         </span>
         {seat.inHand && (

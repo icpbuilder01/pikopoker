@@ -71,6 +71,11 @@ export function Rules({ onClose }: RulesProps) {
             <strong>30 seconds to act.</strong> Miss the clock and you're auto-checked when it's
             free, auto-folded when it costs chips -- never auto-bet.
           </li>
+          <li>
+            <strong>Side pots.</strong> If someone goes all-in for less than the others are betting,
+            the extra chips beyond their stack form a separate side pot -- they can only win the
+            main pot, the side pot is contested by whoever's still betting.
+          </li>
         </ol>
       </section>
 
