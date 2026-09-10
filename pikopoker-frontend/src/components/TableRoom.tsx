@@ -47,9 +47,20 @@ function seatAngle(index: number, total: number): number {
 // desktop radii are too large for that narrower shape, so `compact` picks
 // smaller ones sized for the smallest phones this app supports (~320px
 // wide).
-function seatPosition(angle: number, compact: boolean): { top: string; left: string; dirX: number; dirY: number } {
+//
+// 2026-09-10: `liftMe` pulls the viewer's own seat further in specifically
+// -- real bug, found via testing (not reported): even at every OTHER
+// seat's card size, the "me" seat's own stack (avatar + hole cards + name
+// pill + the extra "YOU" tag none of the other seats render) is taller
+// than a normal seat, and since it's always rotated to exactly the
+// bottom-center angle, that extra height was poking past the felt-wrap's
+// own outer edge -- confirmed via getBoundingClientRect (~40-50px past,
+// independent of any card-size change, present even at the original
+// shipped card size). Every other seat is untouched (same rx/ry as
+// always); only the one seat that's ever this tall gets extra headroom.
+function seatPosition(angle: number, compact: boolean, liftMe: boolean): { top: string; left: string; dirX: number; dirY: number } {
   const rx = compact ? 36 : 44;
-  const ry = compact ? 34 : 40;
+  const ry = (compact ? 34 : 40) - (liftMe ? (compact ? 6 : 9) : 0);
   const left = 50 + rx * Math.cos(angle);
   const top = 50 + ry * Math.sin(angle);
   // Unit vector pointing from this seat back toward the felt's center --
@@ -731,7 +742,8 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               const angleOffset = myPos >= 0 ? Math.PI / 2 - seatAngle(myPos, total) : 0;
               return entries.map(({ seat, i }, pos_i) => {
                 const angle = seatAngle(pos_i, total) + angleOffset;
-                const pos = seatPosition(angle, isCompact);
+                const isMe = myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText;
+                const pos = seatPosition(angle, isCompact, isMe);
                 return (
                   <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
                     <SeatCard
@@ -739,7 +751,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                       seatIndex={i}
                       isDealer={Number(view.dealerSeat) === i}
                       isActing={view.actingSeat !== undefined && Number(view.actingSeat) === i}
-                      isMe={myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText}
+                      isMe={isMe}
                       joining={joiningSeat === i}
                       canJoin={mySeatIndex === -1 && joiningSeat === null}
                       timerProgress={timerProgress}

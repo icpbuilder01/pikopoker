@@ -116,7 +116,7 @@ export function SeatCard({
       </div>
       {seat.committedThisRound > 0n && (
         <div
-          className="chip-badge"
+          className={`chip-badge${flip ? " flip" : ""}`}
           key={seat.committedThisRound.toString()}
           style={{
             // @ts-expect-error custom properties read by the keyframe in App.css

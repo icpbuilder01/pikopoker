@@ -211,6 +211,23 @@
   display: block;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--rank-gold);
+  cursor: pointer;
+}
+
 /* ---- Hero ---- */
 
 .hero {
@@ -420,16 +437,16 @@ section.block > *:last-child {
    the dev asked for this directly after the mobile version shipped.
    Opponents' cards (face-down or shown at showdown) are untouched. */
 .seat-card.me .playing-card.small {
-  width: 62px;
-  height: 88px;
+  width: 68px;
+  height: 96px;
 }
 
 .seat-card.me .playing-card.small .playing-card-corner {
-  font-size: 1.1rem;
+  font-size: 1.19rem;
 }
 
 .seat-card.me .playing-card.small .playing-card-pip {
-  font-size: 2.44rem;
+  font-size: 2.66rem;
 }
 
 .card-row.seat-cards {
@@ -1143,7 +1160,24 @@ section.block > *:last-child {
 }
 
 /* The floating "bet" pill -- nudged toward the pot via an inline transform
-   (see TableRoom's seatPosition dirX/dirY) so bets visually drift inward. */
+   (see TableRoom's seatPosition dirX/dirY) so bets visually drift inward.
+
+   2026-09-10, real bug found via testing (not reported, caught while
+   verifying an unrelated card-size change): sits in normal flex flow,
+   after the avatar/cards/name/tags stack -- fine for every seat except
+   the viewer's own bottom-center one, where "after" means toward the
+   felt's OUTER edge rather than toward the pot, stacking on top of an
+   already-tall column and measurably poking past the felt's own bottom
+   rail (~42px, confirmed via getBoundingClientRect, independent of the
+   own-card-size bump found alongside it). Every other seat has this
+   flow position work in its favor (the felt center -- and the pot --
+   is naturally on the far side of "after"), so a global fix would trade
+   one seat's overflow for breaking every other seat's already-correct
+   layout. Fixed with `order: -1` (see `.chip-badge.flip` below) --
+   same `flip` boolean the dealer-button/timer-bar already use for
+   exactly this "bottom seat is the one exception" class of problem --
+   moving the badge in front of the whole stack instead, which for the
+   flipped seat means the felt's open center, not its outer rail. */
 .chip-badge {
   display: inline-flex;
   align-items: center;
@@ -1159,6 +1193,12 @@ section.block > *:last-child {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   transform: translate(var(--bet-x), var(--bet-y));
   animation: chip-drop 0.24s ease-out;
+}
+
+.chip-badge.flip {
+  order: -1;
+  margin-top: 0;
+  margin-bottom: 3px;
 }
 
 @keyframes chip-drop {
@@ -1782,13 +1822,37 @@ section.block > *:last-child {
     padding: 7px 10px;
     margin-bottom: 8px;
     gap: 8px;
+    /* 2026-09-10, real bug reported live: this row used to fully
+       disappear the instant it becomes your turn (a `.table-room:has(
+       .action-bar.modern) { display: none }` rule, removed here), and
+       the action bar that replaces it is a lot taller (its
+       presets/buttons/info tiles vs. just a stack line + two small
+       buttons here) -- since the felt is flex-sized to whatever's left
+       over (see the no-scroll layout entry), that height difference
+       showed up as the WHOLE TABLE visibly jumping size the instant
+       betting controls appeared or disappeared. A smooth CSS transition
+       on the felt's own height/width was tried first and measured (via
+       Playwright, sampling every 40ms through a real turn transition) to
+       not animate at all -- the browser applies a flex-grow-computed
+       resize as an instant layout snap, not something `transition:
+       height` interpolates. Reserving roughly the action bar's own
+       height here instead, so the felt's leftover space stays close to
+       constant across both states, trades a bigger idle felt (this
+       used to collapse to ~69px, only a stack line, when it wasn't your
+       turn) for a table that no longer visibly resizes -- worth
+       revisiting if that trade lands wrong; flagged to the dev
+       directly rather than assumed. */
+    min-height: 210px;
+    align-content: center;
   }
 
-  /* Your stack is already shown on your own seat card, and sit-out/leave
-     aren't decisions worth spending screen space on mid-turn -- freeing
-     this row's height only while the action bar (Fold/Call/raise) is
-     actually showing gives the felt and the action bar the room they
-     need most, and it's back the instant it's not your turn. */
+  /* Still mutually exclusive with the action bar -- only the RESERVED
+     HEIGHT is meant to stay constant between the two (via the matching
+     min-heights here and above), not for both to render at once. Without
+     this, removing the old unconditional hide left them stacking on top
+     of each other the instant it became your turn (confirmed via
+     screenshot -- the action bar's own bottom row was pushed off-screen
+     entirely). */
   .table-room:has(.action-bar.modern) .my-seat-bar {
     display: none;
   }
@@ -1797,6 +1861,7 @@ section.block > *:last-child {
     flex: 0 0 auto;
     padding: 8px 10px;
     gap: 6px;
+    min-height: 210px;
   }
 
   .bet-info-tile {
