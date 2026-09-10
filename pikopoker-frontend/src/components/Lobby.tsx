@@ -33,7 +33,7 @@ function createErrorMessage(err: CreatePrivateError): string {
     case CreatePrivateError.Anonymous:
       return "Log in first.";
     case CreatePrivateError.InvalidBuyIn:
-      return "Buy-in must be between 100 and 1,000,000 PIKO.";
+      return "Buy-in must be between 100 and 1,000,000 PIKO (or Free).";
     case CreatePrivateError.InvalidName:
       return "Enter a table name (1-32 characters).";
     default:
@@ -64,6 +64,7 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
 
   const [createName, setCreateName] = useState("");
   const [createBuyIn, setCreateBuyIn] = useState("");
+  const [createFree, setCreateFree] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<{ id: bigint; code: string } | null>(null);
@@ -121,7 +122,7 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
       return;
     }
     const name = createName.trim();
-    const buyIn = parseAmount(createBuyIn);
+    const buyIn = createFree ? 0n : parseAmount(createBuyIn);
     if (name.length === 0) {
       setCreateError("Enter a table name.");
       return;
@@ -292,7 +293,12 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
               value={createBuyIn}
               onChange={(e) => setCreateBuyIn(e.target.value)}
               placeholder="1000"
+              disabled={createFree}
             />
+            <label className="checkbox-row">
+              <input type="checkbox" checked={createFree} onChange={(e) => setCreateFree(e.target.checked)} />
+              Free table (no real PIKO -- complimentary chips, like Free Play)
+            </label>
             <button className="button" style={{ marginTop: 8 }} disabled={creating} onClick={handleCreate}>
               {creating ? "Creating..." : "Create table"}
             </button>
