@@ -208,6 +208,58 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   // Mirrors App.css's `@media (max-width: 640px)` felt-wrap breakpoint --
   // seatPosition() needs to know which ellipse shape it's placing seats on.
   const [isCompact, setIsCompact] = useState(() => window.matchMedia("(max-width: 640px)").matches);
+  // 2026-09-11: real bug, reported live from an actual phone -- CSS
+  // container query length units (`cqh`) were tried first for this exact
+  // "fit a 3:4 box into a flex-grown space, whichever axis is tighter"
+  // problem, and looked correct in every local Playwright/desktop-Chrome
+  // check (measured, not just eyeballed) -- but broke badly on a real
+  // phone: the felt rendered oversized and overlapped the header above
+  // it, something never reproduced locally. `container-type: size` on a
+  // flex-grow item is a known rough edge across browser engines (the
+  // container's own size is supposed to come purely from the flex
+  // algorithm, but establishing size containment on that same box can
+  // create exactly this kind of instability depending on the engine) --
+  // not worth continuing to chase blind on hardware unavailable here.
+  // Replaced with a plain `ResizeObserver` measuring `.felt-slot`
+  // directly and computing the felt's pixel size in JS instead -- the
+  // same "measure the real thing instead of asking CSS to infer it"
+  // philosophy as the `--app-height` fix, and no more fragile than that
+  // one, unlike the CSS container-query approach.
+  const feltSlotRef = useRef<HTMLDivElement | null>(null);
+  const [feltSlotSize, setFeltSlotSize] = useState<{ width: number; height: number } | null>(null);
+  const viewLoaded = view !== null;
+  useEffect(() => {
+    const el = feltSlotRef.current;
+    if (!el || !isCompact) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setFeltSlotSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+    // `view` is a dependency on purpose, not just isCompact: `.felt-slot`
+    // (and this ref) only exists in the DOM once `view` has loaded (see
+    // the `{view && (...)}` guard around it below) -- without this, an
+    // effect run that fires before the first successful load finds
+    // `feltSlotRef.current` still null, bails out immediately, and (since
+    // isCompact alone doesn't change again) never gets a second chance to
+    // actually attach the observer once the element exists. Real bug,
+    // caught by re-measuring after the first fix looked right in one
+    // test but produced a stale (pre-JS, CSS-fallback-only) size in
+    // another -- not just assumed from reading the effect. Depends on
+    // `viewLoaded` (a plain boolean), not `view` itself, so this only
+    // re-runs on the load->loaded transition, not on every 700ms poll.
+  }, [isCompact, viewLoaded]);
+  // 3:4 portrait ratio on mobile (see App.css's felt-wrap aspect-ratio) --
+  // picks whichever of the slot's own width/height is the tighter fit.
+  const feltStyle =
+    isCompact && feltSlotSize
+      ? (() => {
+          const width = Math.min(feltSlotSize.width, feltSlotSize.height * 0.75);
+          return { width: `${width}px`, height: `${(width * 4) / 3}px` };
+        })()
+      : undefined;
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
@@ -688,8 +740,11 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               specifically for this case, scoped to occupied-seat count,
               not felt size -- a seat-count problem, not a narrow-felt
               one. */}
-          <div className="felt-slot">
-            <div className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}>
+          <div className="felt-slot" ref={feltSlotRef}>
+            <div
+              className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}
+              style={feltStyle}
+            >
               <div className="felt" />
             <div className="felt-center">
               <span className="felt-phase">
