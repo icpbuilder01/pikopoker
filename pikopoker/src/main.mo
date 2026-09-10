@@ -1356,7 +1356,30 @@ actor self {
     timerId := ?Timer.setTimer<system>(
       #seconds TICK_INTERVAL_SECONDS,
       func() : async () {
-        await* tick();
+        // 2026-09-10, real incident: found live on mainnet via
+        // getTickDiagnostics -- tickCount froze completely (stopped
+        // incrementing at all, confirmed by polling it minutes apart)
+        // right around a backend upgrade, and never recovered on its own.
+        // This closure had no try/catch: any uncaught trap inside
+        // `tick()` -- for ANY one table, ANY one of the several per-table
+        // branches that each do real awaits (dealing, the Showdown
+        // cleanup, finalizeQueuedLeaves) -- kills this whole self-
+        // rescheduling chain permanently, since the `startTicker<system>()`
+        // call that re-arms the next tick never gets reached. Every other
+        // table's action timeouts and dealing stop right along with it,
+        // not just the one table that actually caused the trap. Rather
+        // than chase down which specific per-table state caused this
+        // particular trap (unclear, and a new one could always show up
+        // elsewhere later), fixed the whole class: a trap in `tick()` is
+        // now caught and logged, and the timer always reschedules itself
+        // regardless -- at worst that one broken tick is skipped, not the
+        // entire clock. `adminForceDealNextHand`/`adminKickSeat` remain as
+        // manual recovery levers for whatever table actually caused it.
+        try {
+          await* tick();
+        } catch (e) {
+          Debug.print("tick(): trapped, rescheduling anyway -- " # Error.message(e));
+        };
         startTicker<system>();
       },
     );
