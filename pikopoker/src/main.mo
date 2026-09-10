@@ -120,6 +120,19 @@ actor self {
   // pattern mother/dice already use for a failed transfer after funds
   // logically left the game.
   let pendingPayouts : Map.Map<Principal, Nat> = Map.empty<Principal, Nat>();
+  // Same pendingFundsActions/pendingLeaves pattern, for dealNextHand:
+  // 2026-09-10, at least four independent things can now try to deal a
+  // table (the timer, join, sitting back in, and a periodic nudge every
+  // seated client's own tab sends every few seconds) -- the existing
+  // post-raw_rand phase recheck only protects against ONE specific
+  // overlap shape (a second call resuming after the first already
+  // finished dealing). An explicit lock, set synchronously before the
+  // only await and cleared on every exit path after that, rules out the
+  // whole class of concurrent-dealing races regardless of exact shape or
+  // trigger source -- suspected (not proven) to be involved in this
+  // family's recurring "won uncontested, over and over, right from the
+  // deal" incidents (2026-09-05, and reported again today).
+  let dealingTables : Map.Map<Nat, Bool> = Map.empty<Nat, Bool>();
 
   func newSeats() : [Types.Seat] {
     Array.tabulate<Types.Seat>(
@@ -727,6 +740,14 @@ actor self {
     };
     if (t.phase != #WaitingForPlayers) { return };
 
+    // See dealingTables' own comment: only one attempt to deal this table
+    // may be in flight at a time, no matter which of the several trigger
+    // sources called this. Acquired here (after the cheap synchronous
+    // guards above, right before the only await) and released on every
+    // exit path below.
+    if (Map.get(dealingTables, Nat.compare, t.id) == ?true) { return };
+    Map.add(dealingTables, Nat.compare, t.id, true);
+
     // Fetch entropy BEFORE mutating any seat/table state -- this is the
     // only await in this function, and a canister message can be
     // interleaved with other calls (or the tick timer's next firing) while
@@ -752,6 +773,7 @@ actor self {
       // all adminForceDealNextHand ever does) without ever having proven
       // it.
       Debug.print("dealNextHand: raw_rand failed, table=" # debug_show (t.id) # " error=" # Error.message(e));
+      Map.remove(dealingTables, Nat.compare, t.id);
       return;
     };
 
@@ -766,6 +788,7 @@ actor self {
     // completion atomically before any other call's continuation can run.
     if (t.phase != #WaitingForPlayers) {
       Debug.print("dealNextHand: phase changed during raw_rand await, table=" # debug_show (t.id) # " phase=" # debug_show (t.phase));
+      Map.remove(dealingTables, Nat.compare, t.id);
       return;
     };
 
@@ -816,6 +839,7 @@ actor self {
         )
       );
       t.phase := #WaitingForPlayers;
+      Map.remove(dealingTables, Nat.compare, t.id);
       return;
     };
 
@@ -850,6 +874,7 @@ actor self {
     t.toAct := liveNow.size();
     let firstToAct = switch (nextOccupiedFrom(t, bbSeat, true)) { case (?s) { s }; case null { bbSeat } };
     setActing(t, ?firstToAct);
+    Map.remove(dealingTables, Nat.compare, t.id);
   };
 
   // Attempts to deal a table that's WaitingForPlayers and past its pause,
