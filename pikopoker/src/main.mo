@@ -717,7 +717,31 @@ actor self {
     );
   };
 
+  // 2026-09-10: hardened after a real recurring incident -- the tick()
+  // timer keeps dying completely (freezing every table, confirmed twice
+  // live on mainnet the same day via getTickDiagnostics, even after
+  // wrapping the timer's own `await* tick()` in try/catch) with no
+  // "tick(): trapped" log ever appearing, meaning it's very likely an
+  // uncatchable runtime trap somewhere in tick()'s synchronous code, not
+  // a catchable Error -- Motoko's try/catch only catches Error values
+  // from a failed await, never a genuine trap (array-index-out-of-bounds,
+  // Nat underflow, etc.), which happens in code executed directly inside
+  // a Timer callback with no caller to see a reject message either, so
+  // it's very hard to pin down from the outside. `t.deck[0]` here is the
+  // single most plausible uncatchable-trap candidate found by inspection
+  // (an out-of-bounds index if the deck were ever empty) even though the
+  // normal draw count per hand (<=21 for 8 seats) is nowhere near 52 --
+  // guarding it directly removes this specific trap class regardless of
+  // whether it's actually the culprit, and logs loudly if it ever fires
+  // so this is provable next time rather than still-guessed. Returning 0
+  // ("2 of suit 0") on empty is a deliberately bad fallback for an
+  // already-impossible state -- better than permanently freezing the
+  // timer for every table, never meant to be reached in practice.
   func drawCard(t : Types.Table) : Nat8 {
+    if (t.deck.size() == 0) {
+      Debug.print("drawCard: deck empty, table=" # debug_show (t.id) # " phase=" # debug_show (t.phase) # " handNumber=" # debug_show (t.handNumber));
+      return 0;
+    };
     let c = t.deck[0];
     t.deck := Array.sliceToArray<Nat8>(t.deck, 1, t.deck.size());
     c;
@@ -1305,7 +1329,17 @@ actor self {
                 t.lastResult := null;
                 t.phase := #WaitingForPlayers;
                 t.nextHandAt := null;
+                // 2026-09-10: bracketed with logs while hunting the
+                // recurring "tick() dies completely" incident (see
+                // drawCard's own comment) -- this is the one other real
+                // await left in tick()'s synchronous sweep over every
+                // table, so if the timer ever freezes again, whether the
+                // "done" line below is the last thing logged (or is
+                // missing entirely) narrows this branch in or out fast,
+                // instead of guessing blind again.
+                Debug.print("tick: Showdown cleanup, table=" # debug_show (t.id) # " handNumber=" # debug_show (t.handNumber));
                 await* finalizeQueuedLeaves(t);
+                Debug.print("tick: Showdown cleanup done, table=" # debug_show (t.id));
               };
             };
             case null {};
