@@ -1237,6 +1237,17 @@ actor self {
                   // A stack emptied by the last hand sits out until topped up.
                   if (s.stack == 0 and s.occupant != null) { s.sittingOut := true };
                 };
+                // 2026-09-10: real bug, reported live -- the board and
+                // result text from the finished hand were never cleared
+                // here, so an empty or not-yet-dealt table kept showing
+                // the previous hand's board cards and "Showdown complete"
+                // indefinitely. dealNextHand does reset these, but only
+                // once a *new* hand actually starts -- a table can sit in
+                // WaitingForPlayers for a while first (no one seated yet,
+                // or seated but not dealt), during which the stale state
+                // was visible the whole time.
+                t.board := [];
+                t.lastResult := null;
                 t.phase := #WaitingForPlayers;
                 t.nextHandAt := null;
                 await* finalizeQueuedLeaves(t);

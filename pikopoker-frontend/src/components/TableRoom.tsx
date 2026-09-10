@@ -184,6 +184,41 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
   const myPrincipalText = identity ? identity.getPrincipal().toText() : null;
 
+  // Nudges a WaitingForPlayers table toward dealing without anyone having
+  // to click anything. triggerDeal (a real client-initiated update call)
+  // is proven reliable -- join and sitting back in both already use it --
+  // but the backend timer alone can't always get there on its own, and
+  // requiring a player action to kick it meant a table with two people
+  // already seated, just waiting between hands, could sit stuck
+  // indefinitely. Keeps nudging every few seconds for as long as this
+  // client is seated and active, rather than backend timer surgery --
+  // safer, and works as long as at least one seated player has the table
+  // open, which is the common case. triggerDeal no-ops fast when there's
+  // nothing to do, so this is cheap even when it's not needed.
+  const nudgeStateRef = useRef<{ active: boolean; identity: Identity | null }>({ active: false, identity: null });
+  useEffect(() => {
+    const active = !!(
+      identity &&
+      view &&
+      myPrincipalText &&
+      view.phase === Phase.WaitingForPlayers &&
+      view.seats.some((s) => s.occupant?.toText() === myPrincipalText && !s.sittingOut)
+    );
+    nudgeStateRef.current = { active, identity };
+  }, [identity, view, myPrincipalText]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { active, identity: nudgeIdentity } = nudgeStateRef.current;
+      if (active && nudgeIdentity) {
+        getPikopokerActor(nudgeIdentity)
+          .triggerDeal(tableId)
+          .catch(() => {});
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [tableId]);
+
   // Infer a win purely from my own stack going up right as a result posts --
   // the backend only exposes a human-readable lastResult string, no
   // structured per-seat payout, so this is a heuristic, not ground truth.
