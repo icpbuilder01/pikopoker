@@ -699,6 +699,22 @@ section.block > *:last-child {
      alone would predict. */
   container-type: inline-size;
   container-name: felt;
+  /* 2026-09-10, real bug from a phone screenshot: this shape used to be a
+     true ellipse (border-radius: 50% below, each corner's radius spanning
+     the full half-width/half-height, meeting at the center with no
+     straight edge left anywhere). An ellipse's usable width shrinks
+     continuously away from its vertical center -- the board's 5-card row
+     (felt-board, sized to its own natural content width, not clipped by
+     felt-center's narrower box) sits slightly off-center once the phase/
+     hint text above it pushes it down, landing in a strip where the oval
+     was already narrower than the card row needs, so the outer cards
+     visibly poked past the gold rim. A percentage below 50% leaves
+     straight edges between the rounded corners -- a "racetrack" rounded-
+     rectangle instead of a true oval -- so width is constant across
+     nearly the whole height, not just at dead center. Set here (inherits
+     down to .felt-wrap::before and .felt below) so both layers stay in
+     sync and the rail ring is an even width all the way around. */
+  --felt-radius: 20%;
 }
 
 /* The wood rail: a separate element behind .felt (not a border on it) so it
@@ -708,7 +724,7 @@ section.block > *:last-child {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 50%;
+  border-radius: var(--felt-radius);
   background: linear-gradient(155deg, var(--felt-rail-hi) 0%, var(--felt-rail-lo) 55%, var(--felt-rail-hi) 100%);
   box-shadow:
     inset 0 2px 4px rgba(255, 255, 255, 0.18),
@@ -719,7 +735,7 @@ section.block > *:last-child {
 .felt {
   position: absolute;
   inset: 15px;
-  border-radius: 50%;
+  border-radius: var(--felt-radius);
   background:
     radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--felt) 70%, #fff 8%) 0%, var(--felt) 45%, var(--felt-2) 100%);
   border: 5px solid var(--felt-trim);
