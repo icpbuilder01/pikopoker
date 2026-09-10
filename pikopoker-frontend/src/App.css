@@ -414,6 +414,24 @@ section.block > *:last-child {
   border-radius: 6px;
 }
 
+/* Your own hole cards get to be bigger than everyone else's on desktop
+   too, same reasoning as the existing mobile-only bump below (your seat
+   always has open felt below it, not squeezed against neighbors) --
+   the dev asked for this directly after the mobile version shipped.
+   Opponents' cards (face-down or shown at showdown) are untouched. */
+.seat-card.me .playing-card.small {
+  width: 62px;
+  height: 88px;
+}
+
+.seat-card.me .playing-card.small .playing-card-corner {
+  font-size: 1.1rem;
+}
+
+.seat-card.me .playing-card.small .playing-card-pip {
+  font-size: 2.44rem;
+}
+
 .card-row.seat-cards {
   gap: 3px;
 }

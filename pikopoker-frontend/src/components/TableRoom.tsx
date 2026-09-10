@@ -234,9 +234,9 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
   const myPrincipalText = identity ? identity.getPrincipal().toText() : null;
 
-  // Nudges a WaitingForPlayers table toward dealing without anyone having
-  // to click anything. triggerDeal (a real client-initiated update call)
-  // is proven reliable -- join and sitting back in both already use it --
+  // Nudges a stuck table toward the next hand without anyone having to
+  // click anything. triggerDeal (a real client-initiated update call) is
+  // proven reliable -- join and sitting back in both already use it --
   // but the backend timer alone can't always get there on its own, and
   // requiring a player action to kick it meant a table with two people
   // already seated, just waiting between hands, could sit stuck
@@ -245,13 +245,23 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   // safer, and works as long as at least one seated player has the table
   // open, which is the common case. triggerDeal no-ops fast when there's
   // nothing to do, so this is cheap even when it's not needed.
+  //
+  // 2026-09-10: also active during Showdown, not just WaitingForPlayers.
+  // Real incident -- a backend timer freeze (still not fully root-caused)
+  // left a table stuck showing "Showdown complete" forever, and this
+  // nudge being scoped to WaitingForPlayers only meant it never fired to
+  // help: triggerDeal on the backend now also runs the Showdown cleanup
+  // first (see its own comment), but that only helps if something is
+  // actually calling it during Showdown too. Same reasoning as before --
+  // nudging can't hurt on a table that's fine, and closes off the one
+  // remaining "stuck with no client-side recovery at all" gap.
   const nudgeStateRef = useRef<{ active: boolean; identity: Identity | null }>({ active: false, identity: null });
   useEffect(() => {
     const active = !!(
       identity &&
       view &&
       myPrincipalText &&
-      view.phase === Phase.WaitingForPlayers &&
+      (view.phase === Phase.WaitingForPlayers || view.phase === Phase.Showdown) &&
       view.seats.some((s) => s.occupant?.toText() === myPrincipalText && !s.sittingOut)
     );
     nudgeStateRef.current = { active, identity };
