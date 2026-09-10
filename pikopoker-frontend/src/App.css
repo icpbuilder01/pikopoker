@@ -690,6 +690,14 @@ section.block > *:last-child {
   width: 100%;
   aspect-ratio: 16 / 10;
   margin: 8px 0 20px;
+  /* Lets descendants query the felt's own rendered size below, rather
+     than viewport width -- needed because on mobile the felt is
+     flex-sized to whatever vertical space is left after the header/
+     action-bar/etc. (see the no-scroll layout entry), which a real
+     phone's browser chrome can shrink well below what viewport width
+     alone would predict. */
+  container-type: inline-size;
+  container-name: felt;
 }
 
 /* The wood rail: a separate element behind .felt (not a border on it) so it
@@ -814,6 +822,66 @@ section.block > *:last-child {
   border-radius: 10px;
 }
 
+/* A felt this narrow only happens when the flex no-scroll layout had very
+   little vertical room to give it (a real phone's browser chrome can leave
+   much less than viewport height alone would suggest) -- at that size
+   felt-center's normal content is tall/wide enough relative to the whole
+   felt that seats around the rim (not just their badges) can end up
+   behind it. Trims felt-center itself down further, on top of the regular
+   mobile sizing above, specifically for that case. */
+@container felt (max-width: 300px) {
+  .felt-center {
+    gap: 4px;
+  }
+
+  .felt-phase {
+    font-size: 0.56rem;
+  }
+
+  .felt-board {
+    min-height: 0;
+  }
+
+  .felt-pots {
+    gap: 3px;
+  }
+
+  .felt-pot {
+    font-size: 0.62rem;
+    padding: 2px 6px;
+  }
+
+  .felt-result {
+    font-size: 0.64rem;
+    padding: 3px 8px;
+  }
+
+  /* Opponent seats aren't always at the felt's extreme top/bottom (e.g.
+     3-handed, the other two sit off to the sides at roughly the vertical
+     midline) -- shrinking felt-center alone doesn't fully clear those, so
+     trim the opponent card's own height too. Your own seat (always
+     bottom-center, and deliberately bigger -- see the mobile-card-size
+     entry) is untouched. */
+  .seat-card:not(.me) .seat-identity {
+    gap: 0;
+  }
+
+  .seat-card:not(.me) .seat-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 0.5rem;
+  }
+
+  .seat-card:not(.me) .playing-card.small {
+    width: 22px;
+    height: 31px;
+  }
+
+  .seat-card:not(.me) .card-row {
+    gap: 2px;
+  }
+}
+
 .seat-slot {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -887,11 +955,16 @@ section.block > *:last-child {
 
 /* For a seat in the felt's bottom half (the viewer's own seat, always --
    see badgesFlip() in SeatCard.tsx) the space above the card is the
-   felt-center content (phase/pot/result text), not open felt -- perching
-   below the whole card instead avoids colliding with it. */
+   felt-center content (phase/pot/result text), and the space below it is
+   the felt's own outer rail -- neither has reliable room once hole cards
+   got bigger (see the mobile-card-size entry), so this perches to the
+   *side* instead, at the same height as the top-right default, clear of
+   both regardless of how tall the card itself is. */
 .dealer-button.flip {
-  top: auto;
-  bottom: -2px;
+  top: -2px;
+  right: auto;
+  left: 100%;
+  margin-left: 4px;
 }
 
 .seat-timer-track {
@@ -905,9 +978,12 @@ section.block > *:last-child {
   overflow: hidden;
 }
 
-.seat-timer-track.flip {
-  top: auto;
-  bottom: -4px;
+/* Rendered in normal document flow for a flipped seat instead of floated
+   above/below the card -- see the "isActing && flip" comment in
+   SeatCard.tsx for why. */
+.seat-timer-track.inline {
+  position: static;
+  margin: 3px 4px 0;
 }
 
 .seat-timer-bar {
