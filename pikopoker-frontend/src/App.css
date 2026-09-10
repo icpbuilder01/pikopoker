@@ -844,6 +844,9 @@ section.block > *:last-child {
   }
 }
 
+/* A direct child of .seat-card (not nested in .seat-avatar) so its .flip
+   variant below can clear the *whole* card, same reasoning as
+   .seat-timer-track just above. */
 .dealer-button {
   position: absolute;
   top: -2px;
@@ -864,6 +867,15 @@ section.block > *:last-child {
   z-index: 3;
 }
 
+/* For a seat in the felt's bottom half (the viewer's own seat, always --
+   see badgesFlip() in SeatCard.tsx) the space above the card is the
+   felt-center content (phase/pot/result text), not open felt -- perching
+   below the whole card instead avoids colliding with it. */
+.dealer-button.flip {
+  top: auto;
+  bottom: -2px;
+}
+
 .seat-timer-track {
   position: absolute;
   top: -4px;
@@ -873,6 +885,11 @@ section.block > *:last-child {
   border-radius: 2px;
   background: rgba(0, 0, 0, 0.3);
   overflow: hidden;
+}
+
+.seat-timer-track.flip {
+  top: auto;
+  bottom: -4px;
 }
 
 .seat-timer-bar {

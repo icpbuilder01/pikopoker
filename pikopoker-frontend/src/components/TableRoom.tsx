@@ -551,8 +551,16 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               {view.pots.length > 0 && (
                 <div className="felt-pots">
                   {view.pots.map((pot, i) => (
-                    <span className="felt-pot" key={i}>
-                      {view.pots.length > 1 ? `Pot ${i + 1}: ` : "Pot: "}
+                    <span
+                      className="felt-pot"
+                      key={i}
+                      title={
+                        view.pots.length > 1
+                          ? "A side pot forms when a player goes all-in for less than the others -- they can only win up to this pot, the rest is between whoever's left."
+                          : undefined
+                      }
+                    >
+                      {view.pots.length > 1 ? (i === 0 ? "Main pot: " : `Side pot ${i}: `) : "Pot: "}
                       <ChipAmount amount={pot.amount} unit={unit} size={12} />
                     </span>
                   ))}
