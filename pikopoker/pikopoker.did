@@ -192,6 +192,8 @@ service : {
       lastTickAt: int;
       now: int;
       tickCount: nat;
+      timerArmCount: nat;
+      timerFireCount: nat;
     }) query;
   joinPrivateTable: (code: text, seatIndex: nat) ->
    (variant {
