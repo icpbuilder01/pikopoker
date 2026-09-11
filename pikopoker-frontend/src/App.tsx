@@ -42,7 +42,7 @@ function App() {
     });
   }, []);
 
-  // 2026-09-10/11: real bug, two symptoms from the same root cause,
+  // 2026-09-10/11: real bug, several symptoms from the same root cause,
   // reported live in that order. `.page.in-table` was pinned to 100dvh
   // first -- recalculates live as the mobile browser's own chrome shows/
   // hides, which made the table visibly jump size mid-scroll (fixed by
@@ -55,22 +55,30 @@ function App() {
   // bar's buttons. Neither static unit is right: dvh recalculates too
   // eagerly (mid-transition, causing visible resize), svh never
   // recalculates at all (leaving the gap once chrome settles hidden).
-  // The standard fix for exactly this class of problem: read the real
-  // `window.innerHeight` via JS instead of a CSS viewport unit, but only
-  // on the browser's own `resize` event -- which mobile browsers fire
-  // once chrome finishes showing/hiding (a settled value), not
-  // continuously during the hide/show animation the way `dvh` does. So
-  // this tracks the *real* available height (no wasted gap) without
-  // reintroducing a live mid-scroll jump (no continuous updates).
+  //
+  // First attempt at the standard fix: `window.innerHeight` via a plain
+  // `resize` listener. the dev reported the resize-during-scroll problem
+  // was STILL happening after that shipped -- `window`'s own `resize`
+  // event is known to be unreliable specifically for the mobile-chrome-
+  // toggle case on some Android Chrome versions (it's the same
+  // unreliability that motivated inventing dvh/svh/lvh in the first
+  // place). Switched to the `visualViewport` API instead, which exists
+  // specifically to track this -- `window.visualViewport.height` reports
+  // the actual currently-visible area (chrome excluded) and its own
+  // `resize` event is the purpose-built, more reliable signal for this
+  // exact scenario, with a plain-`window` fallback for older engines
+  // that lack it.
   useEffect(() => {
+    const vv = window.visualViewport;
     function setAppHeight() {
-      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+      document.documentElement.style.setProperty("--app-height", `${vv ? vv.height : window.innerHeight}px`);
     }
     setAppHeight();
-    window.addEventListener("resize", setAppHeight);
+    const target: { addEventListener: typeof window.addEventListener; removeEventListener: typeof window.removeEventListener } = vv ?? window;
+    target.addEventListener("resize", setAppHeight);
     window.addEventListener("orientationchange", setAppHeight);
     return () => {
-      window.removeEventListener("resize", setAppHeight);
+      target.removeEventListener("resize", setAppHeight);
       window.removeEventListener("orientationchange", setAppHeight);
     };
   }, []);

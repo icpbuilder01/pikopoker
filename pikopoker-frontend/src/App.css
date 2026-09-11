@@ -1918,8 +1918,20 @@ section.block > *:last-child {
        used to collapse to ~69px, only a stack line, when it wasn't your
        turn) for a table that no longer visibly resizes -- worth
        revisiting if that trade lands wrong; flagged to the dev
-       directly rather than assumed. */
-    min-height: 210px;
+       directly rather than assumed.
+
+       2026-09-11: lowered 210 -> 216 alongside the action bar's own
+       compaction pass just above -- 210 was sized to match the action
+       bar's PRE-compaction height (~258px, itself already more than
+       210 -- an approximation, never exact), so once the action bar
+       shrank this reservation was left stale and oversized, visibly
+       wasting empty space in the idle state (confirmed via video: a
+       large gap between the seat badge and "Your stack"). Re-measured
+       the action bar's actual new height via Playwright after
+       compacting it (216px, not the ~150px originally guessed) and set
+       this to match exactly, rather than leaving another approximate
+       gap between the two. */
+    min-height: 216px;
     align-content: center;
   }
 
@@ -1934,26 +1946,53 @@ section.block > *:last-child {
     display: none;
   }
 
+  /* 2026-09-11, real complaint: "l'interface de mise prend beaucoup trop
+     de place comparé a la table" -- the action bar's own natural height
+     (needed, at the time, to make `.my-seat-bar`'s matching min-height
+     reservation below not force a huge idle-state gap) was itself too
+     tall relative to the felt. Trimmed every sub-piece's own padding/
+     font-size here (tiles, buttons, presets, gaps) rather than dropping
+     any of them -- Fold/Check/the 4 presets/custom-amount are all still
+     real, still tappable, just each a little leaner. Re-measured the
+     result via Playwright (216px, down from ~258px) and set both this
+     and `.my-seat-bar`'s min-height below to that measured value,
+     rather than leaving a stale, now-oversized (or mismatched) guess. */
   .action-bar.modern {
     flex: 0 0 auto;
-    padding: 8px 10px;
-    gap: 6px;
-    min-height: 210px;
+    padding: 6px 8px;
+    gap: 4px;
+    min-height: 216px;
   }
 
   .bet-info-tile {
-    padding: 5px 10px;
+    padding: 3px 8px;
     min-width: 0;
     flex: 1 1 0;
   }
 
+  .bet-info-label {
+    font-size: 0.58rem;
+  }
+
+  .bet-info-value {
+    font-size: 0.92rem;
+  }
+
   .action-bar.modern .action-buttons .button {
-    padding: 11px 12px;
-    font-size: 0.88rem;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+  }
+
+  .bet-presets-label {
+    font-size: 0.6rem;
+  }
+
+  .bet-presets {
+    gap: 3px;
   }
 
   .bet-preset {
-    padding: 6px 6px;
+    padding: 4px 6px;
     min-width: 0;
     flex: 1 1 0;
   }
