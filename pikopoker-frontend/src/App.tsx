@@ -42,47 +42,6 @@ function App() {
     });
   }, []);
 
-  // 2026-09-10/11: real bug, several symptoms from the same root cause,
-  // reported live in that order. `.page.in-table` was pinned to 100dvh
-  // first -- recalculates live as the mobile browser's own chrome shows/
-  // hides, which made the table visibly jump size mid-scroll (fixed by
-  // switching to 100svh, always sized as if chrome is fully shown). But
-  // 100svh is a static WORST CASE -- whenever the chrome actually *is*
-  // hidden (the common case once a phone's browser has settled after any
-  // scroll/interaction), the real viewport is taller than 100svh, and
-  // that whole gap just sits unused below the table -- confirmed via a
-  // real phone screenshot showing a large empty area under the action
-  // bar's buttons. Neither static unit is right: dvh recalculates too
-  // eagerly (mid-transition, causing visible resize), svh never
-  // recalculates at all (leaving the gap once chrome settles hidden).
-  //
-  // First attempt at the standard fix: `window.innerHeight` via a plain
-  // `resize` listener. the dev reported the resize-during-scroll problem
-  // was STILL happening after that shipped -- `window`'s own `resize`
-  // event is known to be unreliable specifically for the mobile-chrome-
-  // toggle case on some Android Chrome versions (it's the same
-  // unreliability that motivated inventing dvh/svh/lvh in the first
-  // place). Switched to the `visualViewport` API instead, which exists
-  // specifically to track this -- `window.visualViewport.height` reports
-  // the actual currently-visible area (chrome excluded) and its own
-  // `resize` event is the purpose-built, more reliable signal for this
-  // exact scenario, with a plain-`window` fallback for older engines
-  // that lack it.
-  useEffect(() => {
-    const vv = window.visualViewport;
-    function setAppHeight() {
-      document.documentElement.style.setProperty("--app-height", `${vv ? vv.height : window.innerHeight}px`);
-    }
-    setAppHeight();
-    const target: { addEventListener: typeof window.addEventListener; removeEventListener: typeof window.removeEventListener } = vv ?? window;
-    target.addEventListener("resize", setAppHeight);
-    window.addEventListener("orientationchange", setAppHeight);
-    return () => {
-      target.removeEventListener("resize", setAppHeight);
-      window.removeEventListener("orientationchange", setAppHeight);
-    };
-  }, []);
-
   const refreshBalance = useCallback(async (id: Identity) => {
     try {
       const ledger = getLedgerActor();

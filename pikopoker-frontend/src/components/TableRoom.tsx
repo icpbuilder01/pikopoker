@@ -66,18 +66,17 @@ function seatAngle(index: number, total: number): number {
 // always lands exactly at the TOP extreme (sin(angle) = -1, same margin
 // from the edge "me" gets at the bottom, but without any of "me"'s extra
 // lift), and `ry`'s margin is a fixed PERCENTAGE of the felt's height --
-// while a seat card's real height is roughly fixed in PIXELS. On a
-// shorter felt (the ResizeObserver-measured `feltStyle` can size the felt
-// well below the ~640px-viewport case this was last tuned against), the
-// same percentage margin stops being enough absolute pixels, and the seat
-// card's top half renders outside `.felt-wrap` entirely, overlapping
-// whatever sits above it. Fixed generally rather than with another
-// hand-tuned percentage: given the felt's actual pixel height (already
-// measured for `feltStyle`, no new measurement needed), clamp the seat's
-// computed vertical center so it can never sit closer to either edge than
-// half a seat card's real worst-case height -- same "measure the real
-// thing" philosophy as `feltStyle`/`--app-height`, applied to seat
-// placement instead of felt sizing. Only engages on compact/mobile, where
+// while a seat card's real height is roughly fixed in PIXELS. A narrow
+// phone's felt (width-driven via a fixed aspect-ratio, see App.css) can
+// still be short enough that the same percentage margin isn't enough
+// absolute pixels, and the seat card's top half renders outside
+// `.felt-wrap` entirely, overlapping whatever sits above it. Fixed
+// generally rather than with another hand-tuned percentage: given the
+// felt's actual rendered pixel height (read via a plain ResizeObserver on
+// `.felt-wrap` itself, see `feltWrapHeight` below -- CSS computes the
+// size, this just reads it back), clamp the seat's computed vertical
+// center so it can never sit closer to either edge than half a seat
+// card's real worst-case height. Only engages on compact/mobile, where
 // the felt can actually get this short.
 //
 // The margin itself is smaller for every OTHER seat than for "me": "me"'s
@@ -251,59 +250,42 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   // Mirrors App.css's `@media (max-width: 640px)` felt-wrap breakpoint --
   // seatPosition() needs to know which ellipse shape it's placing seats on.
   const [isCompact, setIsCompact] = useState(() => window.matchMedia("(max-width: 640px)").matches);
-  // 2026-09-11: real bug, reported live from an actual phone -- CSS
-  // container query length units (`cqh`) were tried first for this exact
-  // "fit a 3:4 box into a flex-grown space, whichever axis is tighter"
-  // problem, and looked correct in every local Playwright/desktop-Chrome
-  // check (measured, not just eyeballed) -- but broke badly on a real
-  // phone: the felt rendered oversized and overlapped the header above
-  // it, something never reproduced locally. `container-type: size` on a
-  // flex-grow item is a known rough edge across browser engines (the
-  // container's own size is supposed to come purely from the flex
-  // algorithm, but establishing size containment on that same box can
-  // create exactly this kind of instability depending on the engine) --
-  // not worth continuing to chase blind on hardware unavailable here.
-  // Replaced with a plain `ResizeObserver` measuring `.felt-slot`
-  // directly and computing the felt's pixel size in JS instead -- the
-  // same "measure the real thing instead of asking CSS to infer it"
-  // philosophy as the `--app-height` fix, and no more fragile than that
-  // one, unlike the CSS container-query approach.
-  const feltSlotRef = useRef<HTMLDivElement | null>(null);
-  const [feltSlotSize, setFeltSlotSize] = useState<{ width: number; height: number } | null>(null);
+  // 2026-09-12: the whole "fit everything in one screen without scrolling"
+  // design (this used to chase the felt's leftover flex-grow space via a
+  // ResizeObserver on a separate `.felt-slot` wrapper, computing an
+  // explicit pixel width/height every time any sibling UI element changed
+  // height) is gone -- the dev asked directly for PikoPoker's table to
+  // stop resizing at all, pointing at PikoBlackjack's table as the model:
+  // it never fights for exact leftover space, it just renders at its own
+  // natural size on an ordinary scrolling page, so it never has anything
+  // to resize in response to. `.felt-wrap` now sizes itself purely via
+  // CSS (`width: 100%` + a fixed `aspect-ratio`, see App.css) -- nothing
+  // computes or sets its size in JS anymore, so it can no longer resize
+  // just because the action bar's height changed, the header wrapped
+  // differently, or a ResizeObserver callback fired mid-scroll. The one
+  // thing still measured here is the felt's own rendered height in
+  // pixels, purely to feed seatPosition()'s edge-overlap clamp (see that
+  // function's own comment) -- reading the ALREADY-CSS-COMPUTED size,
+  // never setting one.
+  const feltWrapRef = useRef<HTMLDivElement | null>(null);
+  const [feltWrapHeight, setFeltWrapHeight] = useState<number | null>(null);
   const viewLoaded = view !== null;
   useEffect(() => {
-    const el = feltSlotRef.current;
-    if (!el || !isCompact) return;
+    const el = feltWrapRef.current;
+    if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      setFeltSlotSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      setFeltWrapHeight(entry.contentRect.height);
     });
     observer.observe(el);
     return () => observer.disconnect();
-    // `view` is a dependency on purpose, not just isCompact: `.felt-slot`
-    // (and this ref) only exists in the DOM once `view` has loaded (see
-    // the `{view && (...)}` guard around it below) -- without this, an
-    // effect run that fires before the first successful load finds
-    // `feltSlotRef.current` still null, bails out immediately, and (since
-    // isCompact alone doesn't change again) never gets a second chance to
-    // actually attach the observer once the element exists. Real bug,
-    // caught by re-measuring after the first fix looked right in one
-    // test but produced a stale (pre-JS, CSS-fallback-only) size in
-    // another -- not just assumed from reading the effect. Depends on
-    // `viewLoaded` (a plain boolean), not `view` itself, so this only
-    // re-runs on the load->loaded transition, not on every 700ms poll.
-  }, [isCompact, viewLoaded]);
-  // 3:4 portrait ratio on mobile (see App.css's felt-wrap aspect-ratio) --
-  // picks whichever of the slot's own width/height is the tighter fit.
-  const feltDims =
-    isCompact && feltSlotSize
-      ? (() => {
-          const width = Math.min(feltSlotSize.width, feltSlotSize.height * 0.75);
-          return { width, height: (width * 4) / 3 };
-        })()
-      : undefined;
-  const feltStyle = feltDims && { width: `${feltDims.width}px`, height: `${feltDims.height}px` };
+    // `viewLoaded` (not `view` itself, which would re-run this every
+    // 700ms poll): `.felt-wrap` only exists once `view` has loaded, so an
+    // effect run before the first load finds the ref still null and never
+    // gets a second chance to attach without this -- same lesson as the
+    // felt-slot ResizeObserver this replaces.
+  }, [viewLoaded]);
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
@@ -777,19 +759,17 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               rectangle overlap, not just a near-miss). Only matters at
               high occupied-seat counts -- fewer players never put a seat
               exactly on that horizontal line while the board is also
-              full width, and widening the felt to fill mobile screens
-              (see the felt-slot entry) made this worse by triggering the
-              existing @container felt small-felt protection less often.
-              The "many-seats" class shrinks just the board cards
-              specifically for this case, scoped to occupied-seat count,
-              not felt size -- a seat-count problem, not a narrow-felt
-              one. */}
-          <div className="felt-slot" ref={feltSlotRef}>
-            <div
-              className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}
-              style={feltStyle}
-            >
-              <div className="felt" />
+              full width, and the felt filling mobile screens made this
+              worse by triggering the existing @container felt small-felt
+              protection less often. The "many-seats" class shrinks just
+              the board cards specifically for this case, scoped to
+              occupied-seat count, not felt size -- a seat-count problem,
+              not a narrow-felt one. */}
+          <div
+            className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}
+            ref={feltWrapRef}
+          >
+            <div className="felt" />
             <div className="felt-center">
               <span className="felt-phase">
                 {phaseLabel(view.phase)} &middot; Hand #{view.handNumber.toString()}
@@ -861,7 +841,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               return entries.map(({ seat, i }, pos_i) => {
                 const angle = seatAngle(pos_i, total) + angleOffset;
                 const isMe = myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText;
-                const pos = seatPosition(angle, isCompact, isMe, feltDims?.height);
+                const pos = seatPosition(angle, isCompact, isMe, feltWrapHeight ?? undefined);
                 return (
                   <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
                     <SeatCard
@@ -881,169 +861,177 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
                 );
               });
             })()}
-            </div>
           </div>
 
           {mySeat && (
-            <div className="my-seat-bar">
-              <span className="my-seat-stat">
-                Your stack:{" "}
-                <strong>
-                  <ChipAmount amount={mySeat.stack} unit={unit} size={12} />
-                </strong>
-              </span>
-              {myHandLabel && <span className="hand-indicator">{myHandLabel}</span>}
-              <div className="my-seat-actions">
-                <button className="button secondary small" disabled={busy} onClick={() => handleSitOut(!mySeat.sittingOut)}>
-                  {mySeat.sittingOut ? "Sit back in" : "Sit out next hand"}
-                </button>
-                {!isFree && view.phase === Phase.WaitingForPlayers && (
-                  <button className="button secondary small" onClick={() => setShowTopUp((v) => !v)}>
-                    Top up
-                  </button>
-                )}
-                {showLeavePending ? (
-                  <span className="leave-pending">
-                    <span className="leave-pending-dot" />
-                    Leaving after this hand...
-                    <button className="button secondary small" disabled={busy} onClick={handleCancelLeave}>
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button className="button danger small" disabled={busy} onClick={handleLeave}>
-                    {isFree ? "Leave (new chips next time)" : "Leave table"}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {showTopUp && mySeat && (
-            <div className="my-seat-bar join-seat-form">
-              <p>Add more chips to your stack (only while waiting for the next hand).</p>
-              <div className="raise-row">
-                <input
-                  className="input"
-                  placeholder="Amount (PIKO)"
-                  value={topUpInput}
-                  onChange={(e) => setTopUpInput(e.target.value)}
-                />
-                <button className="button small" disabled={busy || parseAmount(topUpInput) === null} onClick={handleTopUp}>
-                  Confirm
-                </button>
-              </div>
-            </div>
-          )}
-
-          {isMyTurn && mySeat && (
+            // 2026-09-12: this used to be two mutually-exclusive bars --
+            // a small "my-seat-bar" (stack + sit-out/leave) outside your
+            // turn, swapped for a much taller "action-bar" (bet info +
+            // Fold/Check/presets) the instant it became your turn. That
+            // swap was the actual cause of the table visibly jumping size
+            // every time a turn changed (the felt used to flex-grow into
+            // whatever height difference that left, see the removed
+            // felt-slot/ResizeObserver machinery above) -- min-height
+            // hacks tried to paper over it but never fully closed the gap.
+            // the dev asked directly for the fix instead of another patch:
+            // always render the same betting interface, just visually
+            // greyed out and non-interactive outside your turn, matching
+            // how PikoBlackjack's table never resizes because it never
+            // swaps its own layout based on turn state either. One bar,
+            // one height, always -- `isMyTurn` now only ever toggles a
+            // `disabled`/dimmed look on the controls that are always
+            // present in the DOM.
             <div className="action-bar modern">
-              {myHandLabel && (
-                // Was only shown in the "Your stack" bar, which is hidden
-                // on mobile specifically while this action bar is showing
-                // (see .my-seat-bar's own comment) -- meaning "what do I
-                // have" disappeared at exactly the moment it matters most,
-                // deciding whether to bet. Shown here too so it stays
-                // visible through your whole turn.
-                <span className="hand-indicator action-bar-hand">{myHandLabel}</span>
+              <div className="action-bar-seat-row">
+                <span className="my-seat-stat">
+                  Your stack:{" "}
+                  <strong>
+                    <ChipAmount amount={mySeat.stack} unit={unit} size={12} />
+                  </strong>
+                </span>
+                {myHandLabel && <span className="hand-indicator">{myHandLabel}</span>}
+                <div className="my-seat-actions">
+                  <button className="button secondary small" disabled={busy} onClick={() => handleSitOut(!mySeat.sittingOut)}>
+                    {mySeat.sittingOut ? "Sit back in" : "Sit out next hand"}
+                  </button>
+                  {!isFree && view.phase === Phase.WaitingForPlayers && (
+                    <button className="button secondary small" onClick={() => setShowTopUp((v) => !v)}>
+                      Top up
+                    </button>
+                  )}
+                  {showLeavePending ? (
+                    <span className="leave-pending">
+                      <span className="leave-pending-dot" />
+                      Leaving after this hand...
+                      <button className="button secondary small" disabled={busy} onClick={handleCancelLeave}>
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button className="button danger small" disabled={busy} onClick={handleLeave}>
+                      {isFree ? "Leave (new chips next time)" : "Leave table"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {showTopUp && (
+                <div className="join-seat-form">
+                  <p>Add more chips to your stack (only while waiting for the next hand).</p>
+                  <div className="raise-row">
+                    <input
+                      className="input"
+                      placeholder="Amount (PIKO)"
+                      value={topUpInput}
+                      onChange={(e) => setTopUpInput(e.target.value)}
+                    />
+                    <button className="button small" disabled={busy || parseAmount(topUpInput) === null} onClick={handleTopUp}>
+                      Confirm
+                    </button>
+                  </div>
+                </div>
               )}
-              <div className="bet-info-row">
-                <div className="bet-info-tile">
-                  <span className="bet-info-label">Pot</span>
-                  <span className="bet-info-value">
-                    <ChipAmount amount={potTotal} unit={unit} size={15} />
-                  </span>
-                </div>
-                <div className={`bet-info-tile ${owe > 0n ? "owe" : ""}`}>
-                  <span className="bet-info-label">To call</span>
-                  <span className="bet-info-value">
-                    {owe > 0n ? <ChipAmount amount={owe} unit={unit} size={15} /> : "Free"}
-                  </span>
-                </div>
-                {secondsLeft !== null && (
+
+              <div className={`betting-controls${isMyTurn ? "" : " not-my-turn"}`} inert={!isMyTurn}>
+                <div className="bet-info-row">
+                  <div className="bet-info-tile">
+                    <span className="bet-info-label">Pot</span>
+                    <span className="bet-info-value">
+                      <ChipAmount amount={potTotal} unit={unit} size={15} />
+                    </span>
+                  </div>
+                  <div className={`bet-info-tile ${owe > 0n ? "owe" : ""}`}>
+                    <span className="bet-info-label">To call</span>
+                    <span className="bet-info-value">
+                      {owe > 0n ? <ChipAmount amount={owe} unit={unit} size={15} /> : "Free"}
+                    </span>
+                  </div>
                   <div className="bet-info-tile timer">
                     <span className="bet-info-label">Time left</span>
-                    <span className="bet-info-value action-timer">{secondsLeft}s</span>
+                    <span className="bet-info-value action-timer">{secondsLeft !== null ? `${secondsLeft}s` : "--"}</span>
                   </div>
-                )}
-              </div>
+                </div>
 
-              <div className="action-buttons">
-                <button className="button danger" disabled={busy} onClick={handleFold}>
-                  Fold
-                </button>
-                <button className="button good" disabled={busy} onClick={handleCheckCall}>
-                  {owe === 0n ? (
-                    "Check"
-                  ) : (
-                    <>
-                      Call <ChipAmount amount={owe} unit={unit} size={12} />
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="bet-presets">
-                <span className="bet-presets-label">Or raise -- tap an amount to bet it right away</span>
-                <div className="bet-presets-row">
-                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(minRaiseFloor)}>
-                    <span className="bet-preset-label">Min</span>
-                    <ChipAmount amount={minRaiseFloor} unit={unit} size={11} />
+                <div className="action-buttons">
+                  <button className="button danger" disabled={busy || !isMyTurn} onClick={handleFold}>
+                    Fold
                   </button>
-                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(halfPotPreset)}>
-                    <span className="bet-preset-label">&frac12; Pot</span>
-                    <ChipAmount amount={halfPotPreset} unit={unit} size={11} />
-                  </button>
-                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(potPreset)}>
-                    <span className="bet-preset-label">Pot</span>
-                    <ChipAmount amount={potPreset} unit={unit} size={11} />
-                  </button>
-                  <button className="button secondary bet-preset" disabled={busy} onClick={() => submitRaise(maxAllInAmount)}>
-                    <span className="bet-preset-label">All-in</span>
-                    <ChipAmount amount={maxAllInAmount} unit={unit} size={11} />
+                  <button className="button good" disabled={busy || !isMyTurn} onClick={handleCheckCall}>
+                    {owe === 0n ? (
+                      "Check"
+                    ) : (
+                      <>
+                        Call <ChipAmount amount={owe} unit={unit} size={12} />
+                      </>
+                    )}
                   </button>
                 </div>
-              </div>
 
-              {!showCustomBet && (
-                <button
-                  type="button"
-                  className="button secondary small bet-custom-toggle"
-                  onClick={() => setShowCustomBet(true)}
-                >
-                  Choose a different amount
-                </button>
-              )}
-
-              {showCustomBet && (
-                <div className="bet-sizer">
-                  <span className="bet-presets-label">Your amount</span>
-                  <input
-                    type="range"
-                    className="bet-slider"
-                    min={sliderMin}
-                    max={sliderMax}
-                    step={sliderStep}
-                    value={sliderValue}
-                    onChange={(e) => setRaiseInput(formatPiko(BigInt(Math.round(Number(e.target.value)))))}
-                  />
-                  <div className="bet-sizer-row">
-                    <label className="bet-amount-input">
-                      <input
-                        className="input"
-                        value={raiseInput}
-                        inputMode="decimal"
-                        onChange={(e) => setRaiseInput(e.target.value)}
-                      />
-                      <span className="bet-amount-unit">{unit}</span>
-                    </label>
-                    <button className="button bet-cta" disabled={busy} onClick={handleRaise}>
-                      {view.currentBet === 0n ? "Bet" : "Raise"}{" "}
-                      <ChipAmount amount={parsedRaise ?? 0n} unit={unit} size={12} />
+                <div className="bet-presets">
+                  <span className="bet-presets-label">Or raise -- tap an amount to bet it right away</span>
+                  <div className="bet-presets-row">
+                    <button className="button secondary bet-preset" disabled={busy || !isMyTurn} onClick={() => submitRaise(minRaiseFloor)}>
+                      <span className="bet-preset-label">Min</span>
+                      <ChipAmount amount={minRaiseFloor} unit={unit} size={11} />
+                    </button>
+                    <button className="button secondary bet-preset" disabled={busy || !isMyTurn} onClick={() => submitRaise(halfPotPreset)}>
+                      <span className="bet-preset-label">&frac12; Pot</span>
+                      <ChipAmount amount={halfPotPreset} unit={unit} size={11} />
+                    </button>
+                    <button className="button secondary bet-preset" disabled={busy || !isMyTurn} onClick={() => submitRaise(potPreset)}>
+                      <span className="bet-preset-label">Pot</span>
+                      <ChipAmount amount={potPreset} unit={unit} size={11} />
+                    </button>
+                    <button className="button secondary bet-preset" disabled={busy || !isMyTurn} onClick={() => submitRaise(maxAllInAmount)}>
+                      <span className="bet-preset-label">All-in</span>
+                      <ChipAmount amount={maxAllInAmount} unit={unit} size={11} />
                     </button>
                   </div>
                 </div>
-              )}
+
+                {!showCustomBet && (
+                  <button
+                    type="button"
+                    className="button secondary small bet-custom-toggle"
+                    disabled={!isMyTurn}
+                    onClick={() => setShowCustomBet(true)}
+                  >
+                    Choose a different amount
+                  </button>
+                )}
+
+                {showCustomBet && (
+                  <div className="bet-sizer">
+                    <span className="bet-presets-label">Your amount</span>
+                    <input
+                      type="range"
+                      className="bet-slider"
+                      min={sliderMin}
+                      max={sliderMax}
+                      step={sliderStep}
+                      value={sliderValue}
+                      disabled={!isMyTurn}
+                      onChange={(e) => setRaiseInput(formatPiko(BigInt(Math.round(Number(e.target.value)))))}
+                    />
+                    <div className="bet-sizer-row">
+                      <label className="bet-amount-input">
+                        <input
+                          className="input"
+                          value={raiseInput}
+                          inputMode="decimal"
+                          disabled={!isMyTurn}
+                          onChange={(e) => setRaiseInput(e.target.value)}
+                        />
+                        <span className="bet-amount-unit">{unit}</span>
+                      </label>
+                      <button className="button bet-cta" disabled={busy || !isMyTurn} onClick={handleRaise}>
+                        {view.currentBet === 0n ? "Bet" : "Raise"}{" "}
+                        <ChipAmount amount={parsedRaise ?? 0n} unit={unit} size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
