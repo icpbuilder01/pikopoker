@@ -157,7 +157,7 @@ function App() {
                 <span className="tag spark">Public &amp; private tables</span>
                 <span className="tag">2-8 player tables</span>
               </div>
-              <h1>Deal me in.</h1>
+              <h1>Take a seat.</h1>
               <p>
                 No-Limit Texas Hold'em, bet in PIKO, running entirely on-chain on the Internet
                 Computer. Sit at a public table with a fixed stake, or start a private table and
