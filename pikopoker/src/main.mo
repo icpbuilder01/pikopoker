@@ -1432,6 +1432,18 @@ actor self {
   // confirmed directly against this exact canister. Harmless either way.
   var tickCount : Nat = 0;
   var lastTickAt : Int = 0;
+  // Guards against two `tickWork()` messages (see startTicker's own
+  // comment for why there are now two independent ones a second apart)
+  // overlapping if a slow tick ever runs longer than TICK_INTERVAL_SECONDS
+  // -- skips a redundant concurrent sweep rather than letting two full
+  // per-table loops race each other (dealNextHand's own `dealingTables`
+  // lock already rules out the worst case of that, but there's no reason
+  // to invite it). `transient`, not stable: correctness never depends on
+  // this surviving an upgrade, and a genuine trap inside `tick()` rolls
+  // back everything that message did -- including this flag's own
+  // `:= true` -- back to whatever it was before that call, so it can
+  // never get permanently stuck on trap, only ever reset by finishing.
+  transient var tickRunning : Bool = false;
   func tick() : async* () {
     tickCount += 1;
     lastTickAt := Time.now();
@@ -1485,63 +1497,87 @@ actor self {
   // upgrade is therefore exactly right, not a bug: it's the only way the
   // recurring tick() timer gets re-established after each backend upgrade.
   //
-  // Uses a self-rescheduling one-shot `Timer.setTimer` instead of
-  // `Timer.recurringTimer`, which fires on a fixed wall-clock schedule
-  // regardless of whether the previous tick() is still resolving.
+  // 2026-09-12, root-caused for real this time (previous entries below are
+  // kept for the record, but their premise turned out to be wrong): every
+  // earlier fix here assumed a trap inside `tick()` could be *caught*
+  // (logged, tolerated, skipped) from the same closure that reschedules
+  // the next tick. It can't. Motoko's `try/catch` only ever catches an
+  // `Error` from a *rejected remote call* -- a genuine runtime trap (a
+  // `Nat` underflow, an out-of-bounds index, an unwrapped `null`,
+  // anywhere in the whole per-table sweep across every table and every
+  // phase branch) aborts the ENTIRE enclosing message and rolls back
+  // every state change it made, `try/catch` or not -- confirmed the hard
+  // way in the 2026-09-10 incident below (a real recurrence with the
+  // try/catch already in place, and no "tick(): trapped" log line ever
+  // printed, proving it was never reached). Since the old design called
+  // `startTicker<system>()` (the reschedule) from INSIDE that same
+  // message, right after the `try/catch`, a trap that skipped the catch
+  // also always skipped the reschedule -- permanently. No amount of
+  // *instrumenting* tick() ever fixes this; the reschedule itself has to
+  // stop being able to depend on tick() finishing at all.
   //
-  // 2026-09-09, root-caused after three iterations on this same "dealing
-  // never completes via the timer" incident: `icp canister logs` finally
-  // caught it directly, once every un-instrumented silent-return in
-  // dealNextHand was logged -- `Management.raw_rand()` was failing on
-  // EVERY attempt with "could not perform remote call", repeating every
-  // tick, while the exact same call succeeded instantly and reliably
-  // every time it was triggered directly via `adminForceDealNextHand`
-  // instead. That error is consistent with the canister running out of
-  // available outstanding-call slots -- and a same-day intermediate
-  // attempt at this fix (reschedule the next timer *before* awaiting
-  // tick(), to survive an uncatchable trap) is exactly what could cause
-  // that: it let an unbounded number of overlapping tick() calls pile up
-  // whenever a single dealNextHand's raw_rand was slow, each one making
-  // its own concurrent raw_rand attempt for the same table. Reverted to
-  // rescheduling the next timer only *after* tick() truly finishes, so at
-  // most one raw_rand call for a given table is ever in flight at a time
-  // -- the original point of self-rescheduling in the first place, and
-  // the actual fix. `adminForceDealNextHand` remains as a manual recovery
-  // lever regardless.
+  // Fixed by giving the reschedule its own message, with nothing else in
+  // it that could ever trap: this closure now ONLY calls
+  // `startTicker<system>()` (pure Timer bookkeeping, can't fail) and
+  // fires `tickWork()` -- the actual per-table sweep -- as a genuine
+  // self-call it does NOT await. An un-awaited call is still sent
+  // immediately (Motoko dispatches the message as soon as the call
+  // expression runs; `await` only ever governs waiting for the reply,
+  // not initiating the send) -- so this closure finishes and commits its
+  // own reschedule a moment later regardless of whatever `tickWork()`
+  // goes on to do or how long it takes. If `tickWork()` later traps, only
+  // ITS OWN message rolls back (that one tick's table-sweep effects,
+  // exactly as before) -- the timer that fired it already committed and
+  // is completely unaffected, so the very next interval fires normally.
+  // This makes the "one trap kills the whole clock forever" failure mode
+  // structurally impossible rather than merely logged when it happens.
+  //
+  // (`await self.something()` -- AWAITING a self-call from inside a
+  // Timer-invoked closure -- was tried once before, on a different
+  // branch, and appeared to hang rather than complete or trap: plausibly
+  // a reentrancy deadlock from a canister awaiting its own reply while
+  // still busy processing the very message that sent it. Deliberately
+  // NOT done here either, for the same reason -- `tickWork()` below is
+  // always fired without awaiting.)
   var timerId : ?Timer.TimerId = null;
   func startTicker<system>() {
     timerId := ?Timer.setTimer<system>(
       #seconds TICK_INTERVAL_SECONDS,
       func() : async () {
-        // 2026-09-10, real incident: found live on mainnet via
-        // getTickDiagnostics -- tickCount froze completely (stopped
-        // incrementing at all, confirmed by polling it minutes apart)
-        // right around a backend upgrade, and never recovered on its own.
-        // This closure had no try/catch: any uncaught trap inside
-        // `tick()` -- for ANY one table, ANY one of the several per-table
-        // branches that each do real awaits (dealing, the Showdown
-        // cleanup, finalizeQueuedLeaves) -- kills this whole self-
-        // rescheduling chain permanently, since the `startTicker<system>()`
-        // call that re-arms the next tick never gets reached. Every other
-        // table's action timeouts and dealing stop right along with it,
-        // not just the one table that actually caused the trap. Rather
-        // than chase down which specific per-table state caused this
-        // particular trap (unclear, and a new one could always show up
-        // elsewhere later), fixed the whole class: a trap in `tick()` is
-        // now caught and logged, and the timer always reschedules itself
-        // regardless -- at worst that one broken tick is skipped, not the
-        // entire clock. `adminForceDealNextHand`/`adminKickSeat` remain as
-        // manual recovery levers for whatever table actually caused it.
-        try {
-          await* tick();
-        } catch (e) {
-          Debug.print("tick(): trapped, rescheduling anyway -- " # Error.message(e));
-        };
         startTicker<system>();
+        ignore self.tickWork();
       },
     );
   };
   startTicker<system>();
+
+  // The actual per-table sweep, as a genuine public method so
+  // `startTicker`'s closure above can fire it via a real self-call
+  // without awaiting it (see that comment for why this split exists).
+  // Public and permission-free on purpose, same posture as `triggerDeal`
+  // -- a client (or anyone) calling this directly just runs the same safe,
+  // idempotent sweep a moment early, no different in kind from the
+  // timer's own call.
+  public shared func tickWork() : async () {
+    // Skips a redundant concurrent sweep if the previous one is still
+    // running (see `tickRunning`'s own comment) -- guards against two
+    // `tickWork()` messages overlapping if a slow tick ever runs past
+    // TICK_INTERVAL_SECONDS, on top of (not instead of) dealNextHand's
+    // own per-table `dealingTables` lock.
+    if (tickRunning) { return };
+    tickRunning := true;
+    try {
+      await* tick();
+    } catch (e) {
+      // Still worth keeping: this DOES catch a rejected downstream call
+      // (e.g. a ledger transfer failing) inside tick()'s per-table sweep,
+      // which is a real, different failure mode from an uncatchable local
+      // trap -- logging it here means one table's bad transfer doesn't
+      // look identical to a silent freeze in the logs.
+      Debug.print("tick(): rejected, skipping this tick -- " # Error.message(e));
+    };
+    tickRunning := false;
+  };
 
   // Re-exposed 2026-09-09 (see the stable-var comment above) specifically
   // to diagnose this recurring "timer stops advancing" incident -- confirms
