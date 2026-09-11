@@ -721,27 +721,16 @@ section.block > *:last-child {
   align-items: center;
 }
 
-/* Outer sizing box for the felt -- exists so mobile can size the felt to
-   BOTH fill the available width AND preserve its aspect ratio without
-   overflowing the leftover vertical space (see the mobile override
-   below for why this needs its own element). `display: contents` on
-   desktop means it has zero effect there -- `.felt-wrap` sizes itself
-   directly as before. */
-.felt-slot {
-  display: contents;
-}
-
 .felt-wrap {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 10;
   margin: 8px 0 20px;
-  /* Lets descendants query the felt's own rendered size below, rather
-     than viewport width -- needed because on mobile the felt is
-     flex-sized to whatever vertical space is left after the header/
-     action-bar/etc. (see the no-scroll layout entry), which a real
-     phone's browser chrome can shrink well below what viewport width
-     alone would predict. */
+  /* Lets descendants (the @container felt query further down) query the
+     felt's own rendered width, rather than viewport width -- the felt is
+     sized from its own width via aspect-ratio (see the mobile override
+     below), which can be narrower than viewport width alone would
+     suggest once the page's own padding/max-width are accounted for. */
   container-type: inline-size;
   container-name: felt;
   /* 2026-09-10, real bug from a phone screenshot: this shape used to be a
@@ -1330,10 +1319,6 @@ section.block > *:last-child {
   box-shadow: 2px 2px 0 var(--hard-shadow);
 }
 
-.hand-indicator.action-bar-hand {
-  align-self: flex-start;
-}
-
 .my-seat-actions {
   display: flex;
   gap: 8px;
@@ -1396,6 +1381,34 @@ section.block > *:last-child {
   align-items: stretch;
   gap: 14px;
   padding: 14px 16px;
+}
+
+/* 2026-09-12: the seat-context row (stack/hand-indicator/sit-out/leave)
+   and the actual betting controls below it now live in the SAME bar at
+   all times (see TableRoom.tsx's own comment on why) -- this is just
+   `.my-seat-bar`'s old flex layout, minus its own border/background/
+   shadow since it's a plain row inside `.action-bar.modern` now rather
+   than a separate bordered bar. */
+.action-bar-seat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Groups the actual bet info/buttons/presets/custom-amount together so
+   the whole group can be dimmed and made non-interactive as one unit
+   outside your turn, without touching the seat row above it (sit-out/
+   top-up/leave stay fully usable regardless of whose turn it is). */
+.betting-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.betting-controls.not-my-turn {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .action-timer {
@@ -1798,50 +1811,28 @@ section.block > *:last-child {
     gap: 3px;
   }
 
-  /* ---- Compact mobile layout: the whole table room (header, felt, stack
-     bar, action bar) needs to fit one phone screen without scrolling.
-     Rather than hand-tuning a fixed felt size per breakpoint (fragile --
-     the felt's actual available space depends on how tall the action bar
-     ends up, which varies with phase/whether it's your turn), the table
-     room becomes a column flexbox pinned to the viewport height: every
-     functional block (header row, stack bar, action bar) keeps its
-     natural size, and only the felt -- purely decorative -- flexes to
-     absorb whatever space is left. That guarantees the controls you
-     actually tap are always fully visible; only the table's own size
-     adapts to the device. `.table-room` keeps `overflow-y: auto` as a
-     last-resort safety net (never a designed state) in case some
-     combination of phase text/seats genuinely can't fit even the
-     functional chrome on a very small device.
-
-     2026-09-10, real bug from a phone video the dev sent: this used to be
-     100dvh ("dynamic viewport height", recalculates live as the mobile
-     browser's own URL bar shows/hides). That sounded like a feature --
-     always know the *actual* visible height -- but it backfires visibly:
-     any tiny scroll (even the `overflow-y: auto` safety net kicking in by
-     a few px) makes the browser chrome auto-hide, which grows 100dvh,
-     which grows the felt, which can remove the overflow that caused the
-     scroll in the first place -- the whole table visibly jumps size
-     during/after a scroll, exactly what got reported as "changes size
-     when scrolling." `100svh` ("small viewport height") instead always
-     sizes for the smallest the viewport can be (chrome fully shown) --
-     slightly less usable height in exchange for a height that never
-     moves, so the felt can never live-resize out from under the player
-     and scrolling (if the safety net ever engages) can't itself trigger
-     more resizing. */
+  /* ---- Compact mobile layout, redesigned 2026-09-12 around PikoBlackjack's
+     table as the explicit model, at the dev's request ("elle change encore
+     de taille... utilise le modele de la table de blackjack, elle ne
+     bouge pas"). Every earlier pass here (see this file's own git history)
+     chased "fit everything in exactly one screen without scrolling" --
+     100dvh, then 100svh, then a visualViewport-tracked --app-height, with
+     the felt flex-growing into whatever leftover space that left -- and
+     each fix in that family closed one resize symptom while the
+     underlying mechanism (the table's size depending on how tall its
+     SIBLINGS happen to be right now) kept producing new ones. Blackjack's
+     own table never has this problem for a structural reason: it doesn't
+     fight for exact leftover space at all, it just renders at its own
+     natural size on an ordinary scrolling page. Copying that: the page is
+     a normal scrolling block again (no pinned height, no overflow:hidden),
+     and the felt sizes itself purely from its own width via `aspect-ratio`
+     (set above) -- nothing about the felt's size depends on the action
+     bar, the header, or any other sibling's height, so none of them
+     changing can make it resize. If content runs long on a small phone,
+     the page just scrolls, the same as it already does in the Lobby and
+     on Blackjack's own page. */
   .page {
     padding: 12px 10px 20px;
-  }
-
-  .page.in-table {
-    display: flex;
-    flex-direction: column;
-    height: var(--app-height, 100svh);
-    padding-bottom: 8px;
-    overflow: hidden;
-  }
-
-  .page.in-table > .header {
-    flex: 0 0 auto;
   }
 
   .header {
@@ -1858,16 +1849,7 @@ section.block > *:last-child {
     display: none;
   }
 
-  .table-room {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-  }
-
   .table-room-header {
-    flex: 0 0 auto;
     margin-bottom: 4px;
   }
 
@@ -1884,134 +1866,35 @@ section.block > *:last-child {
     font-size: 0.95rem;
   }
 
-  /* 2026-09-11, real bug from two phone screenshots: the felt used to be
-     flex-sized directly (flex: 1 1 0 on .felt-wrap itself, with a fixed
-     aspect-ratio) -- which only ever let its HEIGHT track the leftover
-     space, so its WIDTH (derived from that height via the 3/4 ratio)
-     routinely fell well short of the actual page width, leaving visibly
-     wasted margin on both sides that the dev asked to be filled ("elargis
-     la pour que ça alle jusqu au bord en largeur"). Tried giving
-     `.felt-wrap` `width: 100%` directly first -- broke immediately: with
-     BOTH width (now explicit) and height (still flex-grown) definite at
-     the same time, `aspect-ratio` has nothing left to compute and gets
-     silently ignored, so the felt stretched into a badly distorted
-     shape (confirmed via screenshot -- seats landed nowhere near the
-     felt's actual rendered edge). A second attempt used `container-type:
-     size` on this slot plus `cqh` container query units on `.felt-wrap`
-     to compute a ratio-correct size in pure CSS -- looked right in every
-     local (desktop-Chrome, Playwright) check, but broke badly on a real
-     phone (the felt rendered oversized, overlapping the header above
-     it) -- a real engine-specific rough edge with `container-type: size`
-     on a flex-grow item that never reproduced locally, not worth
-     continuing to chase blind on hardware unavailable here.
-
-     Settled on a plain `ResizeObserver` in TableRoom.tsx instead,
-     measuring this slot's real rendered size and computing `.felt-wrap`'s
-     width/height as literal pixel values in JS (same "measure the real
-     thing instead of asking CSS to infer it" philosophy as the
-     `--app-height` fix) -- `feltStyle` there picks whichever of width/
-     (height * 0.75) is tighter, matching the 3:4 ratio, and sets both
-     dimensions explicitly so there's no ambiguity left for any browser
-     engine to resolve differently. This slot's only remaining job is
-     being the flex-grow leftover-space container `.felt-wrap` measures
-     against. */
-  .felt-slot {
-    display: flex;
-    flex: 1 1 0;
-    min-height: 0;
-    align-items: center;
-    justify-content: center;
-  }
-
   .felt-wrap {
     /* Below this width the fixed-size seat cards and felt-center text
        start overlapping (the @container felt block further down trims
-       them, but only so far) -- so the felt refuses to shrink past it
-       even under flex-shrink pressure. Purely a fallback for the instant
-       before the ResizeObserver above has measured anything (or if it's
-       ever unavailable) -- once `feltStyle` sets explicit width/height
-       inline, those win over this. On most phones there's still room to
-       spare; only on the very smallest screens does hitting the floor
-       push total content past the viewport, and `.table-room`'s
-       overflow-y: auto (a safety net, not a designed state) picks up the
-       small resulting scroll rather than letting anything visually
-       collide. Raised 280 -> 300 (the dev asked for a bigger table) --
-       @container felt's own threshold below is raised to match, so the
-       same overlap protection still kicks in at the new floor size. */
+       them, but only so far) -- so the felt refuses to shrink past it.
+       Purely a floor: on most phones the felt is simply 100% of the
+       page's own width (see the `.page` padding above), comfortably
+       above this. */
     min-width: min(100%, 300px);
     width: 100%;
-    height: auto;
     margin: 4px auto;
   }
 
-  .my-seat-bar {
-    flex: 0 0 auto;
-    padding: 7px 10px;
-    margin-bottom: 8px;
-    gap: 8px;
-    /* 2026-09-10, real bug reported live: this row used to fully
-       disappear the instant it becomes your turn (a `.table-room:has(
-       .action-bar.modern) { display: none }` rule, removed here), and
-       the action bar that replaces it is a lot taller (its
-       presets/buttons/info tiles vs. just a stack line + two small
-       buttons here) -- since the felt is flex-sized to whatever's left
-       over (see the no-scroll layout entry), that height difference
-       showed up as the WHOLE TABLE visibly jumping size the instant
-       betting controls appeared or disappeared. A smooth CSS transition
-       on the felt's own height/width was tried first and measured (via
-       Playwright, sampling every 40ms through a real turn transition) to
-       not animate at all -- the browser applies a flex-grow-computed
-       resize as an instant layout snap, not something `transition:
-       height` interpolates. Reserving roughly the action bar's own
-       height here instead, so the felt's leftover space stays close to
-       constant across both states, trades a bigger idle felt (this
-       used to collapse to ~69px, only a stack line, when it wasn't your
-       turn) for a table that no longer visibly resizes -- worth
-       revisiting if that trade lands wrong; flagged to the dev
-       directly rather than assumed.
-
-       2026-09-11: lowered 210 -> 216 alongside the action bar's own
-       compaction pass just above -- 210 was sized to match the action
-       bar's PRE-compaction height (~258px, itself already more than
-       210 -- an approximation, never exact), so once the action bar
-       shrank this reservation was left stale and oversized, visibly
-       wasting empty space in the idle state (confirmed via video: a
-       large gap between the seat badge and "Your stack"). Re-measured
-       the action bar's actual new height via Playwright after
-       compacting it (216px, not the ~150px originally guessed) and set
-       this to match exactly, rather than leaving another approximate
-       gap between the two. */
-    min-height: 216px;
-    align-content: center;
-  }
-
-  /* Still mutually exclusive with the action bar -- only the RESERVED
-     HEIGHT is meant to stay constant between the two (via the matching
-     min-heights here and above), not for both to render at once. Without
-     this, removing the old unconditional hide left them stacking on top
-     of each other the instant it became your turn (confirmed via
-     screenshot -- the action bar's own bottom row was pushed off-screen
-     entirely). */
-  .table-room:has(.action-bar.modern) .my-seat-bar {
-    display: none;
-  }
-
-  /* 2026-09-11, real complaint: "l'interface de mise prend beaucoup trop
-     de place comparé a la table" -- the action bar's own natural height
-     (needed, at the time, to make `.my-seat-bar`'s matching min-height
-     reservation below not force a huge idle-state gap) was itself too
-     tall relative to the felt. Trimmed every sub-piece's own padding/
-     font-size here (tiles, buttons, presets, gaps) rather than dropping
-     any of them -- Fold/Check/the 4 presets/custom-amount are all still
-     real, still tappable, just each a little leaner. Re-measured the
-     result via Playwright (216px, down from ~258px) and set both this
-     and `.my-seat-bar`'s min-height below to that measured value,
-     rather than leaving a stale, now-oversized (or mismatched) guess. */
+  /* 2026-09-12: this used to reserve a min-height matched (by hand-
+     measuring in Playwright, repeatedly, every time either side's own
+     height changed) against a completely separate `.action-bar.modern`
+     rule below -- the two bars were mutually exclusive, swapped by
+     `.table-room:has(.action-bar.modern) .my-seat-bar { display: none }`,
+     and every height mismatch between them was the table's actual resize
+     bug. There is only one bar now (see TableRoom.tsx) -- outside your
+     turn it's simply the same bar with its betting controls dimmed via
+     `.betting-controls.not-my-turn`, so there is nothing left to
+     min-height-match against and nothing left to hide. */
   .action-bar.modern {
-    flex: 0 0 auto;
     padding: 6px 8px;
-    gap: 4px;
-    min-height: 216px;
+    gap: 8px;
+  }
+
+  .action-bar-seat-row {
+    gap: 8px;
   }
 
   .bet-info-tile {
