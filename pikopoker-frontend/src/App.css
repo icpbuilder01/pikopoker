@@ -903,6 +903,34 @@ section.block > *:last-child {
 
   .felt-board {
     min-height: 0;
+    gap: 2px;
+  }
+
+  /* 2026-09-11: real bug, found while reproducing the opponent-badge
+     overflow fix above -- even after the opponent seat's own avatar/card
+     shrink (below) and the vertical clamp in TableRoom.tsx's
+     seatPosition(), a 2-seat table still had the community board's own
+     full-size (54x76) cards keeping felt-center too tall to avoid
+     colliding with the top-opposite seat's name/chip pill on a felt this
+     narrow -- confirmed via getBoundingClientRect at 375x667 (opponent's
+     .seat-namepill and .felt-phase genuinely overlapping). The
+     `many-seats` board shrink already existed for a *different* narrow-
+     felt scenario (7-8 seats) but was gated on seat count, not felt
+     width, so it never engaged here. Reusing the same 30x42 size, scoped
+     to this width-based container query instead so it also covers the
+     low-seat-count case. */
+  .felt-board .playing-card {
+    width: 30px;
+    height: 42px;
+    border-radius: 4px;
+  }
+
+  .felt-board .playing-card-corner {
+    font-size: 0.5rem;
+  }
+
+  .felt-board .playing-card-pip {
+    font-size: 1.1rem;
   }
 
   .felt-pots {
@@ -930,18 +958,40 @@ section.block > *:last-child {
   }
 
   .seat-card:not(.me) .seat-avatar {
-    width: 26px;
-    height: 26px;
-    font-size: 0.5rem;
+    width: 22px;
+    height: 22px;
+    font-size: 0.44rem;
   }
 
   .seat-card:not(.me) .playing-card.small {
-    width: 22px;
-    height: 31px;
+    width: 18px;
+    height: 25px;
   }
 
   .seat-card:not(.me) .card-row {
     gap: 2px;
+  }
+
+  /* 2026-09-11: even after every trim above, an opponent seat's own
+     namepill (name + stack, its tallest remaining piece) still measured
+     into felt-center's own space at this width -- see this block's own
+     top comment. Tucking it in tighter (the existing -6px overlap wasn't
+     enough once the avatar/cards above it also shrank) and shaving the
+     font sizes closes the rest of the gap without making either line
+     illegible (confirmed by rendering and reading them at this size, not
+     just computing the numbers). */
+  .seat-card:not(.me) .seat-cards {
+    margin-top: 1px;
+  }
+
+  .seat-card:not(.me) .seat-namepill {
+    margin-top: -8px;
+    padding: 2px 7px 3px;
+  }
+
+  .seat-card:not(.me) .seat-name,
+  .seat-card:not(.me) .seat-stack {
+    font-size: 0.58rem;
   }
 }
 
