@@ -1475,6 +1475,20 @@ actor self {
   // never get permanently stuck on trap, only ever reset by finishing.
   transient var tickRunning : Bool = false;
   func tick() : async* () {
+    // 2026-09-12: bracketed EVERY branch (not just Showdown, which already
+    // had this from 2026-09-10) while hunting a real incident where
+    // `timerArmCount`/`timerFireCount` (the schedule itself, confirmed
+    // healthy) kept climbing while `tickCount` stayed frozen -- meaning
+    // this whole function's body never completes, but with all tables
+    // genuinely empty (`dealNextHand`'s own `occupied.size() > 0` guard
+    // means the WaitingForPlayers branch prints NOTHING for an empty
+    // table, "the overwhelming majority of tick() calls"), log silence
+    // alone couldn't distinguish "working normally, quietly" from "stuck
+    // early." Logging entry/exit for every table/branch removes that
+    // ambiguity -- if this ever hangs again, `icp canister logs` will
+    // show exactly which table+branch's log line has an entry with no
+    // matching exit, instead of undifferentiated silence.
+    Debug.print("tick: start, tickCount=" # debug_show (tickCount + 1) # " tables=" # debug_show (Map.size(tables)));
     tickCount += 1;
     lastTickAt := Time.now();
     for ((_, t) in Map.entries(tables)) {
@@ -1499,7 +1513,9 @@ actor self {
           // this one succeeding -- the timer catching it too is a bonus,
           // not the only path, so it's fine for this specific call to
           // keep failing quietly (logged) rather than hang the clock.
+          Debug.print("tick: WaitingForPlayers enter, table=" # debug_show (t.id));
           await* maybeDealNow(t);
+          Debug.print("tick: WaitingForPlayers done, table=" # debug_show (t.id));
         };
         case (#Showdown) {
           // 2026-09-10: bracketed with logs while hunting the recurring
@@ -1516,10 +1532,13 @@ actor self {
           Debug.print("tick: Showdown cleanup done, table=" # debug_show (t.id));
         };
         case (_) {
+          Debug.print("tick: action-timeout enter, table=" # debug_show (t.id) # " phase=" # debug_show (t.phase));
           await* maybeEnforceActionTimeout(t);
+          Debug.print("tick: action-timeout done, table=" # debug_show (t.id));
         };
       };
     };
+    Debug.print("tick: end, tickCount=" # debug_show (tickCount));
   };
 
   // Timers do NOT survive an upgrade (per core/Timer.mo's own doc comment)
@@ -1589,6 +1608,30 @@ actor self {
   // different problems that looked identical from `tickCount` alone.
   transient var timerArmCount : Nat = 0;
   transient var timerFireCount : Nat = 0;
+  // 2026-09-12: real bug, found while root-causing the "timerFireCount
+  // climbs, tickCount frozen" mainnet incident (this whole diagnostic's
+  // own reason for existing). `ignore self.tickWork()` sends the self-call
+  // and never looks at the outcome again -- if that specific call is ever
+  // rejected outright (before `tickWork()`'s own body ever starts, so
+  // NONE of its internal logging or the `tickRunning` flag are ever
+  // touched), the failure is completely invisible: no trap, no log line,
+  // nothing -- `tickWork()` (and therefore `tick()`) silently never runs
+  // again, forever, while the schedule itself (this closure, and
+  // `timerFireCount`) keeps firing normally every second, looking
+  // perfectly healthy from that one counter alone. Confirmed this was
+  // happening on mainnet, not just theorized: `tickRunning` read `false`
+  // on every poll (ruling out a stuck guard) and *zero* of `tick()`'s own
+  // new entry/exit prints ever appeared in `icp canister logs` despite
+  // `timerFireCount` cycling repeatedly -- the only remaining explanation
+  // is the self-call itself never actually landing. Fixed by wrapping the
+  // call in its own `async {}` block with a try/catch, still `ignore`d
+  // (so this outer timer closure still never awaits anything itself --
+  // preserves the fix for the EARLIER reentrancy hang from awaiting a
+  // self-call directly inside a timer closure) -- the inner block runs as
+  // its own independent async computation once started, so its own
+  // eventual reply/reject still gets processed on its own regardless of
+  // nothing having awaited the outer future, and a reject now actually
+  // gets logged instead of vanishing.
   var timerId : ?Timer.TimerId = null;
   func startTicker<system>() {
     timerArmCount += 1;
@@ -1597,7 +1640,15 @@ actor self {
       func() : async () {
         timerFireCount += 1;
         startTicker<system>();
-        ignore self.tickWork();
+        ignore (
+          async {
+            try {
+              await self.tickWork();
+            } catch (e) {
+              Debug.print("tick: self-call to tickWork() failed -- " # Error.message(e));
+            };
+          }
+        );
       },
     );
   };
@@ -1643,8 +1694,9 @@ actor self {
     now : Int;
     timerArmCount : Nat;
     timerFireCount : Nat;
+    tickRunning : Bool;
   } {
-    { tickCount; lastTickAt; now = Time.now(); timerArmCount; timerFireCount };
+    { tickCount; lastTickAt; now = Time.now(); timerArmCount; timerFireCount; tickRunning };
   };
 
   // One-shot 2026-09-09 diagnostic: reports exactly what tick()'s own
@@ -1814,6 +1866,31 @@ actor self {
     seat.holeCards := null;
     seat.committedThisRound := 0;
     seat.committedThisHand := 0;
+    // 2026-09-12: real bug, caught live -- kicking the LAST occupied seat
+    // mid-hand left the TABLE itself stuck (phase stayed e.g. #PreFlop,
+    // `actingSeat`/`currentBet`/`board` all stale, and the VIEW-only
+    // `pots` -- computed from seat commitments, not its own field --
+    // stale right along with them) with zero occupants and no way back to
+    // #WaitingForPlayers: `dealNextHand`'s own active<2 guard returns
+    // early without resetting phase, and
+    // Showdown-only cleanup doesn't apply outside #Showdown. Nothing
+    // about this specific case (kicking every remaining seat at once) had
+    // come up before. Mirrors the same field reset `maybeCleanupShowdown`
+    // already uses for its own Showdown->WaitingForPlayers transition,
+    // just gated on genuinely zero occupants (checked fresh, after this
+    // kick) instead of on phase, since this is a forced admin recovery,
+    // not a natural hand-end.
+    if (Array.all<Types.Seat>(t.seats, func(s) { s.occupant == null })) {
+      t.board := [];
+      t.lastResult := null;
+      t.phase := #WaitingForPlayers;
+      t.nextHandAt := null;
+      t.actingSeat := null;
+      t.actionDeadline := null;
+      t.currentBet := 0;
+      t.minRaiseAmount := 0;
+      t.toAct := 0;
+    };
     result;
   };
 

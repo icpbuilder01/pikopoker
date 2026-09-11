@@ -192,6 +192,7 @@ service : {
       lastTickAt: int;
       now: int;
       tickCount: nat;
+      tickRunning: bool;
       timerArmCount: nat;
       timerFireCount: nat;
     }) query;
