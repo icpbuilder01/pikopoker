@@ -70,6 +70,7 @@ type TableKind =
  };
 type SeatView = 
  record {
+   afkTimeouts: nat;
    committedThisHand: nat;
    committedThisRound: nat;
    hasFolded: bool;

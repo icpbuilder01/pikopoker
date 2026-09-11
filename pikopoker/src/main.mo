@@ -116,6 +116,38 @@ actor self {
   func leaveKey(tableId : Nat, p : Principal) : Text {
     Nat.toText(tableId) # "#" # Principal.toText(p);
   };
+  // 2026-09-11: consecutive turns resolved by the action-timeout clock
+  // rather than a real fold/checkOrCall/betOrRaiseTo from the seat's own
+  // occupant -- a brand-new stable map, NOT a new field on the existing
+  // `Types.Seat` record, on purpose: a first attempt adding `var
+  // afkTimeouts : Nat` directly to `Seat` traps the canister outright on
+  // upgrade ("RTS error: Memory-incompatible program upgrade") since
+  // Motoko's enhanced orthogonal persistence has no way to synthesize a
+  // value for that field on seat records already persisted before the
+  // upgrade -- caught on the local network before ever touching mainnet.
+  // A brand-new top-level map, same safe-EOP "pure addition" pattern as
+  // `pendingLeaves`/`pendingFundsActions` above, sidesteps the problem
+  // entirely (a lookup miss just means "0", exactly the right default
+  // for every seat that existed before this feature). Keyed by table id
+  // + SEAT INDEX (not principal): tied to the physical seat slot, so a
+  // fresh occupant sitting down there never inherits a predecessor's
+  // count (removed here on every leave, not just reset to 0 -- an absent
+  // entry already means 0). Reset to absent by any real action from the
+  // seat's own occupant; incremented by maybeEnforceActionTimeout; at 4,
+  // the seat is force-vacated.
+  let afkTimeouts : Map.Map<Text, Nat> = Map.empty<Text, Nat>();
+  func afkKey(tableId : Nat, seatIndex : Nat) : Text {
+    Nat.toText(tableId) # "#" # Nat.toText(seatIndex);
+  };
+  func getAfkTimeouts(tableId : Nat, seatIndex : Nat) : Nat {
+    switch (Map.get(afkTimeouts, Text.compare, afkKey(tableId, seatIndex))) {
+      case (?n) { n };
+      case null { 0 };
+    };
+  };
+  func resetAfkTimeouts(tableId : Nat, seatIndex : Nat) {
+    Map.remove(afkTimeouts, Text.compare, afkKey(tableId, seatIndex));
+  };
   // A failed payout (cash-out or, in principle, a refund) is recorded here
   // rather than silently lost -- retryable via claimPendingPayout, same
   // pattern mother/dice already use for a failed transfer after funds
@@ -211,7 +243,7 @@ actor self {
 
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
 
-  func seatView(t : Types.Table, seat : Types.Seat, caller : Principal) : Types.SeatView {
+  func seatView(t : Types.Table, seat : Types.Seat, seatIndex : Nat, caller : Principal) : Types.SeatView {
     let revealCards = switch (seat.occupant) {
       case (?o) { o == caller or t.phase == #Showdown };
       case null { false };
@@ -226,6 +258,7 @@ actor self {
       isAllIn = seat.isAllIn;
       inHand = seat.inHand;
       sittingOut = seat.sittingOut;
+      afkTimeouts = getAfkTimeouts(t.id, seatIndex);
     };
   };
 
@@ -238,7 +271,7 @@ actor self {
       smallBlind = t.smallBlind;
       bigBlind = t.bigBlind;
       phase = t.phase;
-      seats = Array.map<Types.Seat, Types.SeatView>(t.seats, func(s) { seatView(t, s, caller) });
+      seats = Array.mapEntries<Types.Seat, Types.SeatView>(t.seats, func(s, i) { seatView(t, s, i, caller) });
       board = t.board;
       dealerSeat = t.dealerSeat;
       actingSeat = t.actingSeat;
@@ -550,6 +583,7 @@ actor self {
       seat.occupant := null;
       seat.stack := 0;
       seat.sittingOut := false;
+      resetAfkTimeouts(t.id, seatIndex);
       return #Ok(0);
     };
 
@@ -560,6 +594,7 @@ actor self {
     seat.occupant := null;
     seat.stack := 0;
     seat.sittingOut := false;
+    resetAfkTimeouts(t.id, seatIndex);
 
     let Ledger = ledger();
     let fee = try { await Ledger.icrc1_fee() } catch (_e) { 10_000 };
@@ -994,6 +1029,65 @@ actor self {
     await* finalizeQueuedLeaves(t);
   };
 
+  // 2026-09-11: extracted from tick()'s own action-timeout case (still
+  // used from there too), same reasoning as maybeCleanupShowdown above --
+  // the dev reported live that an AFK player's clock hitting 0 did
+  // nothing. Root cause: this enforcement has only ever run from the
+  // backend timer, and the timer is the same one that keeps dying for
+  // reasons still not fully root-caused (see drawCard's own comment) --
+  // when it's dead, action-timeout enforcement silently stops right
+  // alongside dealing and Showdown cleanup, but unlike those two, it
+  // never got its own client-callable fallback. Fixed the same way:
+  // `triggerDeal` (below) now also calls this, so any OTHER seated
+  // client still watching the table (the AFK player's own client
+  // obviously isn't polling) can resolve the timeout on their behalf.
+  //
+  // Also implements the dev's second ask here: 4 consecutive turns
+  // resolved by this timeout (not a real action -- see afkTimeouts' own
+  // comment in types.mo) force-vacates the seat, so an AFK player can't
+  // sit occupying a seat indefinitely (his own framing: "pour eviter
+  // qu'un joueur afk bloque une table publique"). Auto-FOLD (already
+  // not live in the current hand) is safe to vacate immediately, same
+  // guarantee leaveTable's own hasFolded check already relies on for a
+  // self-requested leave. Auto-CHECK (still live -- didn't owe anything
+  // this street) is NOT safe to vacate immediately (would silently
+  // delete a still-live contestant's claim on the pot, along with their
+  // stack, if they were to end up winning it) -- queued via the exact
+  // same `pendingLeaves` mechanism a normal mid-hand leave request uses,
+  // so it resolves safely once the hand naturally ends.
+  func maybeEnforceActionTimeout(t : Types.Table) : async* () {
+    switch (t.phase) {
+      case (#WaitingForPlayers or #Showdown) { return };
+      case (_) {};
+    };
+    let deadline = switch (t.actionDeadline) { case (?d) { d }; case null { return } };
+    if (Time.now() < deadline) { return };
+    let seatIndex = switch (t.actingSeat) { case (?i) { i }; case null { return } };
+    let s = t.seats[seatIndex];
+    // Auto-check if free, else auto-fold -- never auto-bets.
+    let folded = t.currentBet > s.committedThisRound;
+    if (folded) { s.hasFolded := true };
+    advanceAfterAction(t, seatIndex);
+    let count = getAfkTimeouts(t.id, seatIndex) + 1;
+    if (count >= 4) {
+      switch (s.occupant) {
+        case (?p) {
+          // doLeave/the queue both already clear this on the way out
+          // (see their own resetAfkTimeouts calls) -- no need to persist
+          // `count` here first.
+          if (folded) {
+            ignore (await* doLeave(t, seatIndex, p));
+          } else {
+            Map.add(pendingLeaves, Text.compare, leaveKey(t.id, p), true);
+          };
+        };
+        case null {};
+      };
+    } else {
+      Map.add(afkTimeouts, Text.compare, afkKey(t.id, seatIndex), count);
+    };
+  };
+
   // 2026-09-09: every caller below routes THROUGH this public method (a
   // genuine self-call via `self.triggerDeal(...)`, a real inter-canister
   // round trip) instead of calling `maybeDealNow`/`dealNextHand` directly
@@ -1022,6 +1116,7 @@ actor self {
       case (?t) {
         await* maybeCleanupShowdown(t);
         await* maybeDealNow(t);
+        await* maybeEnforceActionTimeout(t);
       };
       case null {};
     };
@@ -1076,6 +1171,10 @@ actor self {
   public shared ({ caller }) func fold(tableId : Nat) : async { #Ok; #Err : Types.ActionError } {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NoHandInProgress) } };
     let seatIndex = switch (requireTurn(t, caller)) { case (?i) { i }; case null { return #Err(#NotYourTurn) } };
+    // A real action from the occupant themselves -- see afkTimeouts' own
+    // comment on why this resets (but the timeout-driven path that also
+    // calls hasFolded:=true, in maybeEnforceActionTimeout, must NOT).
+    resetAfkTimeouts(tableId, seatIndex);
     t.seats[seatIndex].hasFolded := true;
     advanceAfterAction(t, seatIndex);
     #Ok;
@@ -1085,6 +1184,7 @@ actor self {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NoHandInProgress) } };
     let seatIndex = switch (requireTurn(t, caller)) { case (?i) { i }; case null { return #Err(#NotYourTurn) } };
     let s = t.seats[seatIndex];
+    resetAfkTimeouts(tableId, seatIndex);
     let owe = if (t.currentBet > s.committedThisRound) { t.currentBet - s.committedThisRound } else { 0 };
     let paid = if (owe >= s.stack) { s.isAllIn := true; s.stack } else { owe };
     s.stack -= paid;
@@ -1101,6 +1201,10 @@ actor self {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NoHandInProgress) } };
     let seatIndex = switch (requireTurn(t, caller)) { case (?i) { i }; case null { return #Err(#NotYourTurn) } };
     let s = t.seats[seatIndex];
+    // Reset as soon as a real attempt from the seat's own occupant is
+    // confirmed (requireTurn passed) -- even an invalid amount below is
+    // still evidence they're present and acting, not AFK.
+    resetAfkTimeouts(tableId, seatIndex);
     if (toAmount <= t.currentBet) { return #Err(#IllegalAction("must raise above the current bet")) };
     let need = toAmount - s.committedThisRound;
     let allIn = need >= s.stack;
@@ -1370,26 +1474,7 @@ actor self {
           Debug.print("tick: Showdown cleanup done, table=" # debug_show (t.id));
         };
         case (_) {
-          switch (t.actionDeadline) {
-            case (?deadline) {
-              if (Time.now() >= deadline) {
-                switch (t.actingSeat) {
-                  case (?seatIndex) {
-                    let s = t.seats[seatIndex];
-                    // Auto-check if free, else auto-fold -- never auto-bets.
-                    if (t.currentBet <= s.committedThisRound) {
-                      advanceAfterAction(t, seatIndex);
-                    } else {
-                      s.hasFolded := true;
-                      advanceAfterAction(t, seatIndex);
-                    };
-                  };
-                  case null {};
-                };
-              };
-            };
-            case null {};
-          };
+          await* maybeEnforceActionTimeout(t);
         };
       };
     };
