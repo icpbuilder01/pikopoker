@@ -462,7 +462,18 @@ section.block > *:last-child {
   display: flex;
   flex-direction: column;
   align-items: center;
-  line-height: 0.85;
+  /* 2026-09-12: real bug, reported live -- "le signe touche presque le
+     chiffre" (the suit symbol almost touches the rank number). Root
+     cause: line-height below 1 (0.85) squeezes a flex-column's two lines
+     tighter than their own font size, which barely showed at the
+     original small corner size but became visibly cramped as the
+     mobile own-card size grew in earlier passes. A small explicit gap
+     is a more direct fix than further tuning line-height -- it holds a
+     fixed real gap regardless of font size, instead of a multiplier
+     that gets tighter in absolute terms as text shrinks and looser as
+     it grows. */
+  line-height: 1;
+  gap: 1px;
   font-size: 1.16rem;
 }
 
@@ -1764,10 +1775,21 @@ section.block > *:last-child {
      with open felt below it, not squeezed against neighbors the way a
      side seat is, so there's real room to spend here. the dev asked for
      this directly; opponents' (still-tiny, face-down or shown at
-     showdown) cards are untouched. */
+     showdown) cards are untouched.
+
+     2026-09-12: bumped again (46x65 -> 54x76) after a real complaint that
+     the rank/suit corner felt cramped -- the actual cramping was a
+     separate line-height bug (see `.playing-card-corner`'s own comment,
+     fixed regardless of size), but there was still real room to grow the
+     card further too, so both landed together. Re-measured via
+     Playwright, not just resized and assumed: the seat card (with a bet
+     showing, the tallest real state) still clears the felt's own bottom
+     edge with real margin (~17-22px) at both 393x700 and the smaller
+     375x600 stress viewport -- `SEAT_CARD_HALF_HEIGHT_ME_PX` in
+     TableRoom.tsx's own clamp didn't need adjusting this time. */
   .seat-card.me .playing-card.small {
-    width: 46px;
-    height: 65px;
+    width: 54px;
+    height: 76px;
   }
 
   .playing-card-corner {
@@ -1779,7 +1801,7 @@ section.block > *:last-child {
   }
 
   .seat-card.me .playing-card.small .playing-card-corner {
-    font-size: 0.72rem;
+    font-size: 0.84rem;
   }
 
   .playing-card-pip {
@@ -1791,7 +1813,7 @@ section.block > *:last-child {
   }
 
   .seat-card.me .playing-card.small .playing-card-pip {
-    font-size: 1.65rem;
+    font-size: 1.93rem;
   }
 
   .seat-card {
