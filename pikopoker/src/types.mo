@@ -97,6 +97,7 @@ module {
     isAllIn : Bool;
     inHand : Bool;
     sittingOut : Bool;
+    afkTimeouts : Nat;
   };
 
   public type Pot = { amount : Nat; eligibleSeats : [Nat] };
