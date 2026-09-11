@@ -58,11 +58,54 @@ function seatAngle(index: number, total: number): number {
 // independent of any card-size change, present even at the original
 // shipped card size). Every other seat is untouched (same rx/ry as
 // always); only the one seat that's ever this tall gets extra headroom.
-function seatPosition(angle: number, compact: boolean, liftMe: boolean): { top: string; left: string; dirX: number; dirY: number } {
+//
+// 2026-09-11: `feltHeightPx` fixes a second, more general version of the
+// same class of bug -- reported live as text overlapping the header above
+// the table, reproduced via Playwright at a deliberately short viewport
+// (375x667): with 2 seats occupied, the seat directly opposite "me"
+// always lands exactly at the TOP extreme (sin(angle) = -1, same margin
+// from the edge "me" gets at the bottom, but without any of "me"'s extra
+// lift), and `ry`'s margin is a fixed PERCENTAGE of the felt's height --
+// while a seat card's real height is roughly fixed in PIXELS. On a
+// shorter felt (the ResizeObserver-measured `feltStyle` can size the felt
+// well below the ~640px-viewport case this was last tuned against), the
+// same percentage margin stops being enough absolute pixels, and the seat
+// card's top half renders outside `.felt-wrap` entirely, overlapping
+// whatever sits above it. Fixed generally rather than with another
+// hand-tuned percentage: given the felt's actual pixel height (already
+// measured for `feltStyle`, no new measurement needed), clamp the seat's
+// computed vertical center so it can never sit closer to either edge than
+// half a seat card's real worst-case height -- same "measure the real
+// thing" philosophy as `feltStyle`/`--app-height`, applied to seat
+// placement instead of felt sizing. Only engages on compact/mobile, where
+// the felt can actually get this short.
+//
+// The margin itself is smaller for every OTHER seat than for "me": "me"'s
+// own card (avatar + full-size hole cards + name pill + the YOU tag) is
+// much taller (~150px), but pushing an opponent's much shorter card
+// (~70px once the @container-felt shrink above applies) out by that same
+// generous margin only shoves it further from the edge and INTO
+// felt-center's own space instead of away from it -- confirmed by
+// measurement while fixing this: a shared 80px margin cleared the header
+// but reproduced the exact same overlap one layer further in, against
+// felt-center. Use the smallest margin each seat actually needs.
+const SEAT_CARD_HALF_HEIGHT_ME_PX = 80;
+const SEAT_CARD_HALF_HEIGHT_OTHER_PX = 46;
+function seatPosition(
+  angle: number,
+  compact: boolean,
+  liftMe: boolean,
+  feltHeightPx?: number,
+): { top: string; left: string; dirX: number; dirY: number } {
   const rx = compact ? 36 : 44;
   const ry = (compact ? 34 : 40) - (liftMe ? (compact ? 6 : 9) : 0);
   const left = 50 + rx * Math.cos(angle);
-  const top = 50 + ry * Math.sin(angle);
+  let top = 50 + ry * Math.sin(angle);
+  if (feltHeightPx && feltHeightPx > 0) {
+    const halfHeightPx = liftMe ? SEAT_CARD_HALF_HEIGHT_ME_PX : SEAT_CARD_HALF_HEIGHT_OTHER_PX;
+    const marginPct = (halfHeightPx / feltHeightPx) * 100;
+    top = Math.min(Math.max(top, marginPct), 100 - marginPct);
+  }
   // Unit vector pointing from this seat back toward the felt's center --
   // used to nudge the bet pill inward, toward the pot, like a real table.
   const dirX = -Math.cos(angle);
@@ -253,13 +296,14 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   }, [isCompact, viewLoaded]);
   // 3:4 portrait ratio on mobile (see App.css's felt-wrap aspect-ratio) --
   // picks whichever of the slot's own width/height is the tighter fit.
-  const feltStyle =
+  const feltDims =
     isCompact && feltSlotSize
       ? (() => {
           const width = Math.min(feltSlotSize.width, feltSlotSize.height * 0.75);
-          return { width: `${width}px`, height: `${(width * 4) / 3}px` };
+          return { width, height: (width * 4) / 3 };
         })()
       : undefined;
+  const feltStyle = feltDims && { width: `${feltDims.width}px`, height: `${feltDims.height}px` };
   const lastTurnKeyRef = useRef<string>("");
   const prevStackRef = useRef<bigint | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
@@ -817,7 +861,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               return entries.map(({ seat, i }, pos_i) => {
                 const angle = seatAngle(pos_i, total) + angleOffset;
                 const isMe = myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText;
-                const pos = seatPosition(angle, isCompact, isMe);
+                const pos = seatPosition(angle, isCompact, isMe, feltDims?.height);
                 return (
                   <div className="seat-slot" style={{ top: pos.top, left: pos.left }} key={i}>
                     <SeatCard
