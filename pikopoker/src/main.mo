@@ -1287,10 +1287,39 @@ actor self {
     let live = liveSeats(t);
     if (live.size() <= 1) { return endHandByFold(t) };
 
-    var contestants = 0;
-    for (i in live.vals()) { if (not t.seats[i].isAllIn) { contestants += 1 } };
-
-    if (t.toAct == 0 or contestants <= 1) {
+    // 2026-09-12: real bug, reported live by the dev as two apparently
+    // separate symptoms -- "quand quelqu'un fait all-in, la partie se
+    // finit automatiquement" (going all-in ends the hand automatically)
+    // and "leave finit juste le tour, pas la main complete" (leaving mid-
+    // hand cuts the hand short for whoever's left) -- both turned out to
+    // be the exact same root cause, reproduced directly: heads-up, A
+    // shoves all-in raising over B's blind. `reopen`/`toAct` correctly
+    // becomes 1 (B still needs to call or fold), but the OLD `or
+    // contestants <= 1` clause below ALSO independently went true at the
+    // same moment (B is now the only live seat that isn't all-in) and
+    // won the `or`, jumping straight to `advanceStreet` -- running out
+    // the entire board and reaching Showdown with B's turn simply never
+    // offered. Confirmed via a real call sequence: B's `committedThisRound`
+    // stayed at their blind, `stack` completely untouched, yet the table
+    // was already at `#Showdown` with a full 5-card board dealt. A queued
+    // leave (which auto-folds the leaving seat the instant it's their
+    // turn, going through this exact same function) hits the identical
+    // trap whenever that fold happens to leave exactly one live
+    // non-all-in seat that hasn't matched the current bet yet -- same
+    // bug, different trigger.
+    //
+    // `contestants <= 1` was never actually a valid alternative signal for
+    // "no more action possible THIS round" in the first place: whether
+    // anyone still needs to act on the CURRENT bet is exactly what
+    // `t.toAct` already tracks, precisely and only. The genuinely
+    // legitimate "everyone left is all-in, run the board with no more
+    // betting" case is a NEW STREET starting with zero (or one) live
+    // non-all-in seats -- and that's already handled correctly and
+    // separately, inside `advanceStreet` itself, BEFORE it ever sets
+    // `toAct` for the new street. This function only runs after a real
+    // seat's own action, mid-round, where `toAct` is always the correct
+    // and only signal for whether the round is over.
+    if (t.toAct == 0) {
       advanceStreet(t);
       return;
     };
