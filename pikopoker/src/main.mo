@@ -99,6 +99,10 @@ actor self {
 
   // ---- State ----
   var nextTableId : Nat = 0;
+  // Guards the one-time "add 2 more free tables" migration below --
+  // see its own comment for why this exists instead of a `nextTableId`
+  // check.
+  var freePlay2And3Seeded : Bool = false;
   let tables : Map.Map<Nat, Types.Table> = Map.empty<Nat, Types.Table>();
   let privateCodes : Map.Map<Text, Nat> = Map.empty<Text, Nat>();
   // Locks concurrent join/leave/topUp calls from the same principal --
@@ -246,15 +250,25 @@ actor self {
   // blinds/MAX_SEATS are baked into each Table's immutable fields at
   // `newTable()` time, so changing them for EXISTING tables needs a full
   // reinstall), adding brand-new tables touches nothing about the
-  // existing ones -- safe as a normal upgrade. Guarded on `nextTableId
-  // == 4` (the value right after the original 4-table seed above, before
-  // either of these existed) rather than `Map.size(tables) == 0` (already
-  // false by the time this runs) so it fires exactly once regardless of
-  // whether this lands as part of a fresh install (right after the block
-  // above, in the same init) or an upgrade of the existing 4-table state.
-  if (nextTableId == 4) {
+  // existing ones -- safe as a normal upgrade.
+  //
+  // First attempt guarded this on `nextTableId == 4` (the value right
+  // after the original 4-table seed, before either of these existed) --
+  // WRONG, caught on mainnet before it did any harm (just silently never
+  // fired): real players had already created real private tables via
+  // `createPrivateTable` over this canister's weeks of live use, each one
+  // incrementing `nextTableId` past 4 long before this code ever ran, so
+  // the guard was never true on the actual mainnet canister it needed to
+  // run on -- it only ever worked in this session's own from-scratch
+  // local tests, which never had any private tables to throw the count
+  // off. Fixed with a dedicated stable flag instead, unambiguous
+  // regardless of how many private (or, eventually, more free) tables
+  // exist by the time this runs -- a pure addition, same safe-EOP pattern
+  // as every other one-time migration flag in this file.
+  if (not freePlay2And3Seeded) {
     createFreeTable("Free Play 2");
     createFreeTable("Free Play 3");
+    freePlay2And3Seeded := true;
   };
 
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
@@ -1555,11 +1569,33 @@ actor self {
   // still busy processing the very message that sent it. Deliberately
   // NOT done here either, for the same reason -- `tickWork()` below is
   // always fired without awaiting.)
+  // 2026-09-12: `timerArmCount`/`timerFireCount` added while chasing a
+  // real mainnet incident (see this session's own notes) where the timer
+  // appeared dead (`tickCount` frozen) right after a deploy, on a
+  // canister that had ticked normally for hours before that -- turned
+  // out to be a real but apparently rare/transient one-off (a later
+  // redeploy came back healthy, self-sustaining, no code difference), not
+  // reproduced despite trying. Left in place permanently rather than
+  // reverted once the immediate mystery cleared, matching this file's own
+  // established policy on `getTickDiagnostics` below ("don't remove
+  // reflexively as leftover debug code") -- these separate `tickCount`
+  // (which lives INSIDE the possibly-trapping `tick()` message and would
+  // itself misleadingly read as frozen either way) from the schedule
+  // itself: if `timerArmCount`/`timerFireCount` are ALSO frozen next time
+  // this is reported, the self-rescheduling chain itself is genuinely
+  // dead (needs a redeploy, and is worth digging into why); if they're
+  // still climbing while `tickCount` is frozen, the schedule is fine and
+  // `tick()`'s own per-table work is what's failing instead -- two
+  // different problems that looked identical from `tickCount` alone.
+  transient var timerArmCount : Nat = 0;
+  transient var timerFireCount : Nat = 0;
   var timerId : ?Timer.TimerId = null;
   func startTicker<system>() {
+    timerArmCount += 1;
     timerId := ?Timer.setTimer<system>(
       #seconds TICK_INTERVAL_SECONDS,
       func() : async () {
+        timerFireCount += 1;
         startTicker<system>();
         ignore self.tickWork();
       },
@@ -1598,8 +1634,17 @@ actor self {
   // Re-exposed 2026-09-09 (see the stable-var comment above) specifically
   // to diagnose this recurring "timer stops advancing" incident -- confirms
   // whether the ticker is actually still firing at all, without guessing.
-  public query func getTickDiagnostics() : async { tickCount : Nat; lastTickAt : Int; now : Int } {
-    { tickCount; lastTickAt; now = Time.now() };
+  // `timerArmCount`/`timerFireCount` (2026-09-12) distinguish "the whole
+  // self-rescheduling chain is dead" from "the chain is fine but tick()'s
+  // own work keeps failing" -- see their own comment above.
+  public query func getTickDiagnostics() : async {
+    tickCount : Nat;
+    lastTickAt : Int;
+    now : Int;
+    timerArmCount : Nat;
+    timerFireCount : Nat;
+  } {
+    { tickCount; lastTickAt; now = Time.now(); timerArmCount; timerFireCount };
   };
 
   // One-shot 2026-09-09 diagnostic: reports exactly what tick()'s own
