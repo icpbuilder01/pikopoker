@@ -241,6 +241,22 @@ actor self {
     createFreeTable("Free Play"); // no real PIKO, 1,000 complimentary chips per sit-down
   };
 
+  // 2026-09-12: two more free tables, added at the dev's request. Unlike
+  // the table-TIER changes elsewhere in this file's history (buy-in/
+  // blinds/MAX_SEATS are baked into each Table's immutable fields at
+  // `newTable()` time, so changing them for EXISTING tables needs a full
+  // reinstall), adding brand-new tables touches nothing about the
+  // existing ones -- safe as a normal upgrade. Guarded on `nextTableId
+  // == 4` (the value right after the original 4-table seed above, before
+  // either of these existed) rather than `Map.size(tables) == 0` (already
+  // false by the time this runs) so it fires exactly once regardless of
+  // whether this lands as part of a fresh install (right after the block
+  // above, in the same init) or an upgrade of the existing 4-table state.
+  if (nextTableId == 4) {
+    createFreeTable("Free Play 2");
+    createFreeTable("Free Play 3");
+  };
+
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
 
   func seatView(t : Types.Table, seat : Types.Seat, seatIndex : Nat, caller : Principal) : Types.SeatView {
