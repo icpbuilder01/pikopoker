@@ -836,6 +836,21 @@ section.block > *:last-child {
   animation: pot-grow 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* A side pot only ever shows up next to at least one other pot -- shrink
+   every pill a bit once there's more than one, on top of the nowrap fix
+   above, so stacking 2+ pots (mobile's `.felt-pots { flex-direction:
+   column }`, see below) doesn't grow felt-center enough to reach the
+   viewer's own cards below it -- confirmed via measurement this was
+   still a near-zero-margin fit with nowrap alone. */
+.felt-pots:has(.felt-pot ~ .felt-pot) {
+  gap: 3px;
+}
+
+.felt-pots:has(.felt-pot ~ .felt-pot) .felt-pot {
+  padding: 2px 8px;
+  font-size: 0.68rem;
+}
+
 @keyframes pot-grow {
   from {
     transform: scale(0.85);
@@ -862,6 +877,17 @@ section.block > *:last-child {
   border-radius: 12px;
   font-size: 0.78rem;
   box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.4);
+  /* 2026-09-12: real bug, reported live with a genuine side pot -- a
+     "Side pot N: <amount>" label is often wider than felt-center's own
+     narrow mobile column (min(46%, 150px), see below), so without this
+     it silently wraps onto a second line -- roughly doubling that pill's
+     height -- which pushed felt-center tall enough to collide with the
+     viewer's own hole cards right below it. Pills are short labels, not
+     paragraphs; forcing one line (and letting the pill itself overflow
+     felt-center's column width, which is harmless -- felt-center doesn't
+     clip its own children) keeps every pot pill's height predictable
+     instead of silently doubling with a slightly longer amount. */
+  white-space: nowrap;
 }
 
 .felt-result {

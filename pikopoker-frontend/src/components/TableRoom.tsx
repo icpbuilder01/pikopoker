@@ -685,6 +685,69 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   const parsedRaise = parseAmount(raiseInput);
   const sliderValue = Math.min(Math.max(parsedRaise !== null ? Number(parsedRaise) : sliderMin, sliderMin), sliderMax);
 
+  // Shared with both the seat-rendering map below AND the "is any seat
+  // sitting close to the board's own height" check just below that --
+  // hoisted out of the old per-render IIFE so both can use the exact same
+  // entries/rotation, instead of a second inline computation risking
+  // drifting out of sync with it.
+  //
+  // On mobile, once you're seated, empty seats are just clutter -- there's
+  // no reason to reserve room for 5 empty circles when only 2-3 people are
+  // playing, and it was crowding pot pills/phase text into the seats
+  // around them. Newcomers deciding where to sit still see all 8 (an
+  // empty seat is how they join a specific one), and desktop always shows
+  // all 8 regardless -- there's room to spare.
+  const hideEmpty = isCompact && mySeatIndex >= 0;
+  const seatEntries = view
+    ? view.seats.map((seat, i) => ({ seat, i })).filter(({ seat }) => !hideEmpty || seat.occupant)
+    : [];
+  const seatTotal = seatEntries.length;
+  // Rotate the whole (possibly filtered) ring so the viewer's own seat
+  // always lands exactly at the bottom-center angle, closest to the bet
+  // controls -- relative (clockwise) order among the shown seats is
+  // preserved, matching standard poker-client convention. Computed as a
+  // continuous angle offset (not a discrete slot lookup) so this lands
+  // exactly at the bottom for ANY seat count, not just multiples of 4 --
+  // needed since `seatTotal` varies with how many seats are actually
+  // shown, not just the fixed 8. Seats stay in their default order when
+  // you're not seated.
+  const myPos = seatEntries.findIndex(({ i }) => i === mySeatIndex);
+  const seatAngleOffset = myPos >= 0 ? Math.PI / 2 - seatAngle(myPos, seatTotal) : 0;
+  // 2026-09-12: real bug, reported live -- the dev asked directly whether
+  // opponent avatars can land in the middle, on top of the board, once
+  // there are "more than 4 players." Reproduced: the OLD guard here
+  // (`occupied seats >= 7`) was a count-based proxy for a purely
+  // GEOMETRIC condition -- a seat overlaps the board only when its own
+  // angle puts it close enough to the horizontal midline (small
+  // |sin(angle)|) that its position lands at roughly the same height as
+  // the board row, regardless of how many seats are occupied. Measured
+  // directly: 5 occupied seats produced a real overlap (an opponent's
+  // avatar AND cards sitting on top of the community board), proving seat
+  // COUNT alone predicts this badly (whether any seat's angle happens to
+  // fall near 0/180 depends on the count AND the rotation offset
+  // together, which itself depends on which physical seat "me" occupies
+  // -- not a smooth function of count at all). Replaced the count check
+  // with the actual geometric one: true whenever any OTHER occupied
+  // seat's computed angle has |sin| under this cutoff.
+  //
+  // Threshold picked empirically, not purely analytically -- an earlier
+  // attempt at 0.4 (between the 5-seat failure's 0.309 and a 3-seat
+  // success's 0.5) still missed a real 6-seat overlap measured afterward
+  // at sin(30 deg) = 0.5 exactly, while an *earlier* 3-seat case at that
+  // same 0.5 angle had been fine: the board's own current pixel width
+  // (which varies with how many community cards are showing, 0/3/4/5)
+  // also genuinely matters, not just the angle, so no fixed angle cutoff
+  // is perfectly exact either way. Raised to 0.6 -- covers every
+  // overlap actually measured this session with real margin, at the cost
+  // of occasionally shrinking the board a little at a seat count that
+  // might have been fine anyway (e.g. 3-handed can now trigger it too) --
+  // a strictly better trade than the reverse (missing a real overlap),
+  // and the shrunk board still reads fine on its own (see the many-seats
+  // CSS, already shipped and screenshotted for the 7-8 seat case).
+  const hasNearHorizontalSeat = seatEntries.some(
+    ({ i }, pos_i) => i !== mySeatIndex && Math.abs(Math.sin(seatAngle(pos_i, seatTotal) + seatAngleOffset)) < 0.6,
+  );
+
   return (
     <div className="table-room">
       <Confetti trigger={confettiTrigger} />
@@ -748,27 +811,19 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
       {view && (
         <>
-          {/* 2026-09-11: real bug, confirmed via measurement -- with 7-8
-              seats occupied, the two seats sitting exactly left/right of
-              center (angle 0/180, so sin(angle)=0 -- no vertical offset
-              from seatPosition()'s ry at all) land at the exact same
-              height as the community-board row, and the board's own
-              natural width (5 cards, not clipped by felt-center's
-              narrower declared width) reached far enough to genuinely
-              overlap those two seats' name-pill/card area (~40px of real
-              rectangle overlap, not just a near-miss). Only matters at
-              high occupied-seat counts -- fewer players never put a seat
-              exactly on that horizontal line while the board is also
-              full width, and the felt filling mobile screens made this
-              worse by triggering the existing @container felt small-felt
-              protection less often. The "many-seats" class shrinks just
-              the board cards specifically for this case, scoped to
-              occupied-seat count, not felt size -- a seat-count problem,
-              not a narrow-felt one. */}
-          <div
-            className={`felt-wrap${view.seats.filter((s) => s.occupant).length >= 7 ? " many-seats" : ""}`}
-            ref={feltWrapRef}
-          >
+          {/* 2026-09-11/12: real bug, confirmed via measurement -- a seat
+              sitting close enough to the horizontal midline (small
+              |sin(angle)|, see `hasNearHorizontalSeat`'s own comment
+              above) lands at roughly the same height as the community
+              board, and the board's own natural width (up to 5 cards, not
+              clipped by felt-center's narrower declared width) reaches
+              far enough to genuinely overlap that seat's avatar/cards.
+              The "many-seats" class shrinks just the board cards for
+              exactly this case -- named for its original 7-8-seat trigger,
+              kept since the CSS/comments already reference it, but now
+              driven by the real geometric condition instead of a seat-
+              count proxy. */}
+          <div className={`felt-wrap${hasNearHorizontalSeat ? " many-seats" : ""}`} ref={feltWrapRef}>
             <div className="felt" />
             <div className="felt-center">
               <span className="felt-phase">
@@ -814,32 +869,11 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
             </div>
 
             {(() => {
-              // On mobile, once you're seated, empty seats are just
-              // clutter -- there's no reason to reserve room for 5 empty
-              // circles when only 2-3 people are playing, and it's what
-              // was crowding pot pills/phase text into the seats around
-              // them. Newcomers deciding where to sit still see all 8 (an
-              // empty seat is how they join a specific one), and desktop
-              // always shows all 8 regardless -- there's room to spare.
-              const hideEmpty = isCompact && mySeatIndex >= 0;
-              const entries = view.seats
-                .map((seat, i) => ({ seat, i }))
-                .filter(({ seat }) => !hideEmpty || seat.occupant);
-              const total = entries.length;
-              // Rotate the whole (possibly filtered) ring so the viewer's
-              // own seat always lands exactly at the bottom-center angle,
-              // closest to the bet controls -- relative (clockwise) order
-              // among the shown seats is preserved, matching standard
-              // poker-client convention. Computed as a continuous angle
-              // offset (not a discrete slot lookup) so this lands exactly
-              // at the bottom for ANY seat count, not just multiples of 4
-              // -- needed now that "total" varies with how many seats are
-              // actually shown, not just the fixed 8. Seats stay in their
-              // default order when you're not seated.
-              const myPos = entries.findIndex(({ i }) => i === mySeatIndex);
-              const angleOffset = myPos >= 0 ? Math.PI / 2 - seatAngle(myPos, total) : 0;
-              return entries.map(({ seat, i }, pos_i) => {
-                const angle = seatAngle(pos_i, total) + angleOffset;
+              // entries/total/angleOffset (as seatEntries/seatTotal/
+              // seatAngleOffset) are hoisted above, shared with
+              // `hasNearHorizontalSeat` -- see that comment for why.
+              return seatEntries.map(({ seat, i }, pos_i) => {
+                const angle = seatAngle(pos_i, seatTotal) + seatAngleOffset;
                 const isMe = myPrincipalText !== null && seat.occupant?.toText() === myPrincipalText;
                 const pos = seatPosition(angle, isCompact, isMe, feltWrapHeight ?? undefined);
                 return (
