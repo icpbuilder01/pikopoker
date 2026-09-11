@@ -218,6 +218,7 @@ service : {
       Err: ActionError;
       Ok;
     });
+  tickWork: () -> ();
   topUpStack: (tableId: nat, amount: nat) -> (variant {
                                                 Err: JoinError;
                                                 Ok;
