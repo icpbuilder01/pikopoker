@@ -42,6 +42,31 @@ function App() {
     });
   }, []);
 
+  // 2026-09-12: real backend bug, found while investigating a mainnet
+  // report -- the recurring timer's OWN attempt to trigger its per-table
+  // sweep (`tickWork()`) is a genuine inter-canister self-call, made from
+  // code that originates inside a Timer-invoked closure; on mainnet
+  // (never reproduced on the local replica) that specific call appears to
+  // never resolve at all -- not reject, not trap, just silently never
+  // complete -- so the sweep never runs again after the first time this
+  // happens, even though the timer's own recurring schedule (proven
+  // separately healthy via the backend's own diagnostics) keeps firing on
+  // schedule forever. A perfectly ordinary EXTERNAL call to `tickWork()`
+  // (this one) has none of that self-call baggage and reliably works --
+  // confirmed directly, repeatedly, via `icp canister call` while
+  // diagnosing this. So: nudge it from here, unconditionally, as long as
+  // *anyone* has the site open at all (not gated on being logged in or
+  // seated anywhere -- this covers every table, not just whichever one a
+  // given visitor happens to be looking at). Mirrors the same "cheap,
+  // safe to call even when there's nothing to do" reasoning already
+  // established for `TableRoom.tsx`'s own per-table `triggerDeal` nudge.
+  useEffect(() => {
+    const id = setInterval(() => {
+      getPikopokerActor().tickWork().catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
+
   const refreshBalance = useCallback(async (id: Identity) => {
     try {
       const ledger = getLedgerActor();
