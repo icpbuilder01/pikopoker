@@ -77,6 +77,10 @@ actor self {
   // ---- Constants ----
   let ACTION_TIMEOUT_NANOS : Int = 30 * 1_000_000_000;
   let HAND_PAUSE_NANOS : Int = 5 * 1_000_000_000;
+  // 2026-09-12: how long a table can sit occupied-but-unable-to-play
+  // (fewer than 2 active seats, so no hand can ever be dealt) before its
+  // seat(s) are auto-vacated -- see soloIdleSince's own comment below.
+  let SOLO_IDLE_TIMEOUT_NANOS : Int = 10 * 60 * 1_000_000_000;
   // Halved from 2s (2026-09-09) to shave the worst-case slack off every
   // timer-driven transition (action timeouts, the Showdown pause, dealing
   // the next hand) -- tick() itself is cheap when idle (a handful of Map
@@ -152,6 +156,30 @@ actor self {
   func resetAfkTimeouts(tableId : Nat, seatIndex : Nat) {
     Map.remove(afkTimeouts, Text.compare, afkKey(tableId, seatIndex));
   };
+  // 2026-09-12: real bug reported live -- the dev found 2 of his own idle
+  // accounts still occupying a table hours after he'd stopped playing.
+  // Root cause: `afkTimeouts` above only ever counts turns resolved by a
+  // LIVE HAND's own action-timeout, but `dealNextHand`'s own `active.size()
+  // < 2` guard means no hand is EVER dealt while fewer than 2 seats are
+  // active -- so a lone occupied seat (or several, if the occupant(s) are
+  // sittingOut) never gets a turn to time out in the first place. That
+  // combination -- occupied, phase stuck at WaitingForPlayers, active < 2
+  // -- had no automatic recovery at all, only the manual controller-only
+  // adminKickSeat. Confirmed live on mainnet: table 10 had exactly 1
+  // occupied, non-sittingOut, non-inHand seat, stuck this way indefinitely.
+  //
+  // Same safe-EOP "pure top-level map addition" pattern as afkTimeouts/
+  // pendingLeaves above: tableId -> the Time.now() this stuck state was
+  // FIRST observed, cleared the instant the table recovers (a second
+  // active seat joins or sits back in) so a normal short wait for a second
+  // player is never penalized. After SOLO_IDLE_TIMEOUT_NANOS of
+  // continuously being stuck this way, every currently-occupied seat is
+  // vacated via the exact same `doLeave` a normal leave or admin kick
+  // already uses. Always safe to vacate immediately here specifically
+  // because phase == WaitingForPlayers means no seat is ever mid-hand
+  // (`inHand` is always false) -- unlike the in-hand afkTimeouts case,
+  // there's no auto-fold/auto-check distinction to make.
+  let soloIdleSince : Map.Map<Nat, Int> = Map.empty<Nat, Int>();
   // A failed payout (cash-out or, in principle, a refund) is recorded here
   // rather than silently lost -- retryable via claimPendingPayout, same
   // pattern mother/dice already use for a failed transfer after funds
@@ -1040,6 +1068,39 @@ actor self {
     };
   };
 
+  // See soloIdleSince's own comment above for the bug this fixes. Shares
+  // the same "callable from tick() AND triggerDeal" shape as
+  // maybeDealNow/maybeCleanupShowdown/maybeEnforceActionTimeout, for the
+  // same reason: any seated client's own periodic nudge (not just the
+  // sometimes-flaky backend timer) should be able to resolve this.
+  func maybeCleanupIdleSeats(t : Types.Table) : async* () {
+    if (t.phase != #WaitingForPlayers) { return };
+    var occupied : [Nat] = [];
+    var i = 0;
+    while (i < t.seats.size()) {
+      if (t.seats[i].occupant != null) { occupied := Array.concat<Nat>(occupied, [i]) };
+      i += 1;
+    };
+    if (occupied.size() == 0 or seatedActiveIndices(t).size() >= 2) {
+      Map.remove(soloIdleSince, Nat.compare, t.id);
+      return;
+    };
+    switch (Map.get(soloIdleSince, Nat.compare, t.id)) {
+      case null { Map.add(soloIdleSince, Nat.compare, t.id, Time.now()) };
+      case (?since) {
+        if (Time.now() - since >= SOLO_IDLE_TIMEOUT_NANOS) {
+          for (seatIndex in occupied.vals()) {
+            switch (t.seats[seatIndex].occupant) {
+              case (?p) { ignore (await* doLeave(t, seatIndex, p)) };
+              case null {};
+            };
+          };
+          Map.remove(soloIdleSince, Nat.compare, t.id);
+        };
+      };
+    };
+  };
+
   // 2026-09-10: extracted from tick()'s own #Showdown case (still used
   // from there too) so `triggerDeal` below can also perform this cleanup
   // directly, not just the backend timer. Real incident: the timer
@@ -1160,6 +1221,7 @@ actor self {
       case (?t) {
         await* maybeCleanupShowdown(t);
         await* maybeDealNow(t);
+        await* maybeCleanupIdleSeats(t);
         await* maybeEnforceActionTimeout(t);
       };
       case null {};
@@ -1593,6 +1655,7 @@ actor self {
           // keep failing quietly (logged) rather than hang the clock.
           Debug.print("tick: WaitingForPlayers enter, table=" # debug_show (t.id));
           await* maybeDealNow(t);
+          await* maybeCleanupIdleSeats(t);
           Debug.print("tick: WaitingForPlayers done, table=" # debug_show (t.id));
         };
         case (#Showdown) {
