@@ -120,8 +120,24 @@ export function SeatCard({
           key={seat.committedThisRound.toString()}
           style={{
             // @ts-expect-error custom properties read by the keyframe in App.css
-            "--bet-x": `${betDir.x * 16}px`,
-            "--bet-y": `${betDir.y * 14}px`,
+            //
+            // 2026-09-12: real bug, reported live with a genuine side pot
+            // -- this nudge (purely decorative, "drift toward the pot")
+            // used a fixed 16/14px magnitude regardless of how much real
+            // room the felt actually has. For the flipped ("me") badge
+            // specifically, the nudge points straight at felt-center, and
+            // measured directly: even with ZERO nudge the natural gap to
+            // a 2-pot felt-pots box was already only ~2px -- the vertical
+            // nudge had nothing to spend there and only ate into that
+            // already-thin margin. Dropped the vertical component (`
+            // --bet-y`) entirely for the flipped badge specifically --
+            // every other (unflipped) seat keeps the original nudge, this
+            // is the one direction that was measurably making a real
+            // overlap worse rather than just decorative. Horizontal
+            // nudge (`--bet-x`) is untouched, halved from 16 to 8 anyway
+            // since it never needed the full original distance either.
+            "--bet-x": `${betDir.x * 8}px`,
+            "--bet-y": flip ? "0px" : `${betDir.y * 7}px`,
           }}
         >
           {unit === "PIKO" ? <PikoIcon size={11} /> : <span className="chip-dot" />}

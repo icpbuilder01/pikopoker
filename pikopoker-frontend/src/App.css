@@ -854,12 +854,12 @@ section.block > *:last-child {
    viewer's own cards below it -- confirmed via measurement this was
    still a near-zero-margin fit with nowrap alone. */
 .felt-pots:has(.felt-pot ~ .felt-pot) {
-  gap: 3px;
+  gap: 2px;
 }
 
 .felt-pots:has(.felt-pot ~ .felt-pot) .felt-pot {
-  padding: 2px 8px;
-  font-size: 0.68rem;
+  padding: 1px 6px;
+  font-size: 0.62rem;
 }
 
 @keyframes pot-grow {
@@ -1852,6 +1852,12 @@ section.block > *:last-child {
      stack instead of running in one wide row, so both fit side by side. */
   .felt-center {
     width: min(46%, 150px);
+    /* 2026-09-12: trimmed from the base 8px alongside the chip-badge
+       nudge fix -- every px here is real headroom against the bottom
+       ("me") seat's own badge, which sits closest to felt-center of
+       anything on the felt (see that fix's own comment for the measured
+       near-zero clearance this is helping with). */
+    gap: 5px;
   }
 
   .felt-pots {
