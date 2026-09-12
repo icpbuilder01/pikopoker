@@ -513,7 +513,13 @@ actor self {
         // TransferFailed/TemporarilyUnavailable forever). The deal
         // trigger is a nice-to-have on top of an already-successful
         // join, never worth losing the join over.
-        if (r == #Ok(())) { try { await self.triggerDeal(t.id) } catch (_e) {} };
+        //
+        // 2026-09-12: that fix only ever covered a REJECTED self-call --
+        // a HUNG one (see nudgeDeal's own comment) skipped Map.remove
+        // just the same, since a direct `await` never returns either
+        // way. Switched to `nudgeDeal`, which can't block this function
+        // at all regardless of what triggerDeal does.
+        if (r == #Ok(())) { ignore nudgeDeal(t.id) };
         r;
       };
     };
@@ -543,7 +549,13 @@ actor self {
         // TransferFailed/TemporarilyUnavailable forever). The deal
         // trigger is a nice-to-have on top of an already-successful
         // join, never worth losing the join over.
-        if (r == #Ok(())) { try { await self.triggerDeal(t.id) } catch (_e) {} };
+        //
+        // 2026-09-12: that fix only ever covered a REJECTED self-call --
+        // a HUNG one (see nudgeDeal's own comment) skipped Map.remove
+        // just the same, since a direct `await` never returns either
+        // way. Switched to `nudgeDeal`, which can't block this function
+        // at all regardless of what triggerDeal does.
+        if (r == #Ok(())) { ignore nudgeDeal(t.id) };
         r;
       };
     };
@@ -739,12 +751,14 @@ actor self {
     t.seats[seatIndex].sittingOut := sittingOut;
     // Sitting back in can be exactly what brings a WaitingForPlayers table
     // back up to 2 active seats -- try dealing right away rather than
-    // waiting on the timer (see maybeDealNow's own comment).
-    // Same reasoning as joinPublicTable/joinPrivateTable's try/catch
-    // around this exact call: the sittingOut flag above is already
-    // committed by this point, so a failure here should never turn an
-    // otherwise-successful sit-back-in into a client-visible error.
-    if (not sittingOut) { try { await self.triggerDeal(tableId) } catch (_e) {} };
+    // waiting on the timer (see maybeDealNow's own comment). The
+    // sittingOut flag above is already committed by this point, so
+    // nothing about triggerDeal's own outcome should ever turn an
+    // otherwise-successful sit-back-in into a client-visible error --
+    // `nudgeDeal` (see its own comment) also means a hung self-call here
+    // can't block this function's own return the way a direct `await`
+    // could.
+    if (not sittingOut) { ignore nudgeDeal(tableId) };
     #Ok;
   };
 
@@ -1149,6 +1163,41 @@ actor self {
         await* maybeEnforceActionTimeout(t);
       };
       case null {};
+    };
+  };
+
+  // 2026-09-12: real bug, reported live -- the dev rejoined a table with
+  // an account that had just left, and the hand never dealt. Root cause,
+  // by the same evidence pattern as this session's `tickWork()` self-call
+  // investigation: `joinPublicTable`/`joinPrivateTable`/`sitOut` all
+  // directly `await self.triggerDeal(...)` -- and if that self-call ever
+  // HANGS (sent, never resolving -- not rejecting, which the existing
+  // try/catch already handled fine) rather than trapping or rejecting,
+  // the ENTIRE outer call hangs right along with it, forever. For the two
+  // join methods this is worse than just "the deal didn't happen": the
+  // `Map.remove(pendingFundsActions, ...)` cleanup sits AFTER this call
+  // in the same function, so a hang here means it's never reached either
+  // -- permanently locking that principal out of joining ANY table again
+  // (every future join immediately hits the pendingFundsActions guard).
+  // This is the exact same failure SHAPE as the 2026-09-10 entry right
+  // above it (an uncaught reject skipping the same cleanup) -- just the
+  // hang variant of it, which try/catch cannot help with at all.
+  //
+  // Fixed the same way as the timer's own self-call: fire it via an
+  // un-awaited `async {}` block instead of a direct `await`. The call is
+  // still genuinely sent immediately (Motoko dispatches on the call
+  // expression, not on `await`), so this is no less "real" a nudge than
+  // before -- but the CALLER (join/sitOut) can no longer be blocked by
+  // whatever happens to it, and reaches its own cleanup/return
+  // immediately regardless. Combined with the frontend's own periodic
+  // external nudges (per-table triggerDeal every 3s, and a global
+  // tickWork() every 5s, neither of which depend on this self-call
+  // either), a hang here now has no way to block real gameplay at all.
+  func nudgeDeal(tableId : Nat) : async () {
+    try {
+      await self.triggerDeal(tableId);
+    } catch (e) {
+      Debug.print("nudgeDeal: triggerDeal self-call failed -- " # Error.message(e));
     };
   };
 
