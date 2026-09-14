@@ -179,4 +179,14 @@ module {
   };
 
   public type CreatePrivateError = { #Anonymous; #InvalidBuyIn; #InvalidName };
+
+  // ---- Per-table chat ----
+
+  public type ChatMessage = {
+    sender : Principal;
+    text : Text;
+    timestamp : Int; // Time.now(), nanoseconds
+  };
+
+  public type ChatError = { #Anonymous; #TableNotFound; #EmptyMessage; #MessageTooLong };
 }
