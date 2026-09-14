@@ -120,6 +120,19 @@ type CreatePrivateError =
    InvalidBuyIn;
    InvalidName;
  };
+type ChatMessage = 
+ record {
+   sender: principal;
+   "text": text;
+   timestamp: int;
+ };
+type ChatError = 
+ variant {
+   Anonymous;
+   EmptyMessage;
+   MessageTooLong;
+   TableNotFound;
+ };
 type ActionError = 
  variant {
    IllegalAction: text;
@@ -186,6 +199,7 @@ service : {
   getLobby: () -> (vec TableSummary) query;
   getMyPrivateTables: () -> (vec TableSummary) query;
   getRakeBalance: () -> (nat) query;
+  getTableChat: (tableId: nat) -> (vec ChatMessage) query;
   getTableView: (tableId: nat) -> (opt TableView) query;
   getTickDiagnostics: () ->
    (record {
@@ -214,6 +228,11 @@ service : {
   lockPikoLedgerId: () -> ();
   lockRakeWithdrawals: () -> ();
   proposeRakeWithdrawal: (to: principal, amount: nat) -> ();
+  sendTableChat: (tableId: nat, "text": text) ->
+   (variant {
+      Err: ChatError;
+      Ok;
+    });
   setPikoLedgerId: (id: principal) -> ();
   setRakeBps: (bps: nat) -> ();
   sitOut: (tableId: nat, sittingOut: bool) ->

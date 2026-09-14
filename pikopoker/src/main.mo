@@ -246,6 +246,33 @@ actor self {
   // deal" incidents (2026-09-05, and reported again today).
   let dealingTables : Map.Map<Nat, Bool> = Map.empty<Nat, Bool>();
 
+  // 2026-09-15: per-table chat, requested by the dev. Messages expire
+  // after 24h to bound cycles/memory growth -- deliberately done by
+  // LAZY filtering (on every read AND on every send, never via a Timer/
+  // self-call) rather than a proactive cleanup job, specifically to avoid
+  // adding another self-call to the already-fragile class of bug this
+  // canister keeps hitting (tick()/triggerDeal, see the many 2026-09
+  // entries above) -- a chat feature has no business risking that. An
+  // idle table's stale messages just sit in stable memory unread/
+  // unfiltered until the next send prunes them; the read path never
+  // shows anything past CHAT_TTL_NANOS regardless of whether storage has
+  // been pruned yet, so correctness never depends on the prune actually
+  // running promptly.
+  let tableChats : Map.Map<Nat, [Types.ChatMessage]> = Map.empty<Nat, [Types.ChatMessage]>();
+  let CHAT_TTL_NANOS : Int = 24 * 60 * 60 * 1_000_000_000;
+  let CHAT_MAX_MESSAGES : Nat = 200; // hard cap per table regardless of age, bounds worst-case memory
+  let CHAT_MAX_MESSAGE_LEN : Nat = 240;
+
+  func freshChatMessages(tableId : Nat) : [Types.ChatMessage] {
+    let now = Time.now();
+    switch (Map.get(tableChats, Nat.compare, tableId)) {
+      case null { [] };
+      case (?msgs) {
+        Array.filter<Types.ChatMessage>(msgs, func(m) { now - m.timestamp < CHAT_TTL_NANOS });
+      };
+    };
+  };
+
   func newSeats() : [Types.Seat] {
     Array.tabulate<Types.Seat>(
       Types.MAX_SEATS,
@@ -402,6 +429,38 @@ actor self {
       case (?t) { ?tableView(t, caller) };
       case null { null };
     };
+  };
+
+  // Public within the table -- not seat-gated (spectators can read/send
+  // too, same "watch without logging in, log in to act" posture as the
+  // rest of this canister), redacts nothing. See freshChatMessages'
+  // comment above for why expiry is lazy rather than timer-driven.
+  public query func getTableChat(tableId : Nat) : async [Types.ChatMessage] {
+    freshChatMessages(tableId);
+  };
+
+  public shared ({ caller }) func sendTableChat(tableId : Nat, text : Text) : async {
+    #Ok;
+    #Err : Types.ChatError;
+  } {
+    if (Principal.isAnonymous(caller)) { return #Err(#Anonymous) };
+    switch (Map.get(tables, Nat.compare, tableId)) {
+      case null { return #Err(#TableNotFound) };
+      case (?_) {};
+    };
+    let trimmed = Text.trim(text, #char ' ');
+    if (Text.size(trimmed) == 0) { return #Err(#EmptyMessage) };
+    if (Text.size(trimmed) > CHAT_MAX_MESSAGE_LEN) { return #Err(#MessageTooLong) };
+    let fresh = freshChatMessages(tableId);
+    let appended = Array.concat<Types.ChatMessage>(fresh, [{ sender = caller; text = trimmed; timestamp = Time.now() }]);
+    // Keep only the most recent CHAT_MAX_MESSAGES regardless of age -- a
+    // hard cap independent of the 24h TTL, so a single very chatty table
+    // can't grow unbounded within a day.
+    let bounded = if (appended.size() > CHAT_MAX_MESSAGES) {
+      Array.sliceToArray<Types.ChatMessage>(appended, appended.size() - CHAT_MAX_MESSAGES, appended.size());
+    } else { appended };
+    Map.add(tableChats, Nat.compare, tableId, bounded);
+    #Ok;
   };
 
   public query func getLobby() : async [Types.TableSummary] {
