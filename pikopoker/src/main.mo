@@ -349,8 +349,16 @@ actor self {
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
 
   func seatView(t : Types.Table, seat : Types.Seat, seatIndex : Nat, caller : Principal) : Types.SeatView {
+    // 2026-09-14: real bug reported live -- a folded seat's holeCards are
+    // never cleared on fold (only hasFolded is set, see fold()/finishAction
+    // -Advance), so this used to reveal EVERY occupied seat's cards at
+    // Showdown regardless of whether that seat actually folded before
+    // reaching it. A folded hand is mucked, not shown -- only seats still
+    // live at Showdown (didn't fold) should have their cards revealed to
+    // everyone; the seat's own occupant can always see their own cards
+    // either way, folded or not.
     let revealCards = switch (seat.occupant) {
-      case (?o) { o == caller or t.phase == #Showdown };
+      case (?o) { o == caller or (t.phase == #Showdown and not seat.hasFolded) };
       case null { false };
     };
     {
