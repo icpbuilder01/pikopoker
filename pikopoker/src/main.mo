@@ -114,6 +114,53 @@ actor self {
   // first await so a burst of concurrent calls from one principal can't
   // interleave across the icrc2_transfer_from await.
   let pendingFundsActions : Map.Map<Principal, Bool> = Map.empty<Principal, Bool>();
+  // 2026-09-12: real bug reported live, twice -- a principal locked out of
+  // EVERY table (even Free Play, which never touches this map's callers at
+  // all) with "Transfer failed -- try again." forever, needing a manual
+  // `adminClearPendingFunds` each time. This map's own guard is exactly
+  // the "self-call/external-call can hang, not just reject" class already
+  // proven several times elsewhere in this file (tick()/tickWork(),
+  // triggerDeal) -- except here the hang is in the real
+  // `icrc2_transfer_from`/`icrc1_transfer` awaits inside doJoin/doLeave/
+  // topUpStack themselves, which genuinely CANNOT be made fire-and-forget
+  // the way tickWork()'s nudge could be (the caller's own result has to
+  // reflect whether real funds actually moved). A canister upgrade mid-
+  // flight is one concrete way this happens: Motoko cannot resume an
+  // in-flight await across a reinstall/upgrade, so a join that was
+  // awaiting the ledger's reply exactly when a new backend version got
+  // deployed loses that continuation forever -- the lock it set survives
+  // (it's stable state), but the code that would ever clear it does not
+  // resume. Given how often this canister gets redeployed live, this is a
+  // real, recurring risk, not a one-off.
+  //
+  // Fixed with a timestamp instead of a bare boolean, in a NEW top-level
+  // map (safe-EOP pure addition, same pattern as afkTimeouts/pendingLeaves
+  // -- pendingFundsActions itself is left as-is, only ever read/written
+  // alongside this new map from now on, never given a new value type).
+  // `isPendingFundsLocked` treats an entry as expired after
+  // PENDING_FUNDS_TIMEOUT_NANOS, letting a fresh attempt through
+  // automatically -- no more manual admin intervention needed for this
+  // specific failure mode. A lock entry from BEFORE this upgrade (present
+  // in `pendingFundsActions` but missing from this new map) is treated as
+  // already-expired on sight, which also retroactively unsticks anyone
+  // already stuck from a past incident the moment this deploys.
+  let pendingFundsSince : Map.Map<Principal, Int> = Map.empty<Principal, Int>();
+  let PENDING_FUNDS_TIMEOUT_NANOS : Int = 120 * 1_000_000_000;
+  func isPendingFundsLocked(caller : Principal) : Bool {
+    if (Map.get(pendingFundsActions, Principal.compare, caller) == null) { return false };
+    switch (Map.get(pendingFundsSince, Principal.compare, caller)) {
+      case null { false };
+      case (?since) { Time.now() - since < PENDING_FUNDS_TIMEOUT_NANOS };
+    };
+  };
+  func setPendingFunds(caller : Principal) {
+    Map.add(pendingFundsActions, Principal.compare, caller, true);
+    Map.add(pendingFundsSince, Principal.compare, caller, Time.now());
+  };
+  func clearPendingFunds(caller : Principal) {
+    Map.remove(pendingFundsActions, Principal.compare, caller);
+    Map.remove(pendingFundsSince, Principal.compare, caller);
+  };
   // Seats that asked to leave while still un-folded in a live hand (can't
   // safely vacate mid-hand -- showdown logic needs the seat). Queued here
   // instead of erroring: auto-folded the instant it's their turn (see
@@ -475,7 +522,16 @@ actor self {
         memo = null;
         created_at_time = null;
       });
-    } catch (_e) { #Err(#TemporarilyUnavailable) };
+    } catch (e) {
+      Debug.print("doJoin: icrc2_transfer_from REJECTED, caller=" # Principal.toText(caller) # " table=" # debug_show (t.id) # " amount=" # debug_show (t.buyIn) # " error=" # Error.message(e));
+      #Err(#TemporarilyUnavailable);
+    };
+    switch (result) {
+      case (#Err(e)) {
+        Debug.print("doJoin: icrc2_transfer_from returned Err, caller=" # Principal.toText(caller) # " table=" # debug_show (t.id) # " amount=" # debug_show (t.buyIn) # " error=" # debug_show (e));
+      };
+      case (#Ok(_)) {};
+    };
 
     switch (result) {
       case (#Ok(_)) {
@@ -524,10 +580,10 @@ actor self {
     #Err : Types.JoinError;
   } {
     if (Principal.isAnonymous(caller)) { return #Err(#Anonymous) };
-    if (Map.get(pendingFundsActions, Principal.compare, caller) != null) {
+    if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
-    Map.add(pendingFundsActions, Principal.compare, caller, true);
+    setPendingFunds(caller);
     let outcome = switch (Map.get(tables, Nat.compare, tableId)) {
       case null { #Err(#TableNotFound) };
       case (?t) {
@@ -551,7 +607,7 @@ actor self {
         r;
       };
     };
-    Map.remove(pendingFundsActions, Principal.compare, caller);
+    clearPendingFunds(caller);
     outcome;
   };
 
@@ -560,10 +616,10 @@ actor self {
     #Err : Types.JoinError;
   } {
     if (Principal.isAnonymous(caller)) { return #Err(#Anonymous) };
-    if (Map.get(pendingFundsActions, Principal.compare, caller) != null) {
+    if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
-    Map.add(pendingFundsActions, Principal.compare, caller, true);
+    setPendingFunds(caller);
     let outcome = switch (findTableByCode(code)) {
       case null { #Err(#TableNotFound) };
       case (?t) {
@@ -587,7 +643,7 @@ actor self {
         r;
       };
     };
-    Map.remove(pendingFundsActions, Principal.compare, caller);
+    clearPendingFunds(caller);
     outcome;
   };
 
@@ -657,8 +713,8 @@ actor self {
       return #Ok(0);
     };
 
-    if (Map.get(pendingFundsActions, Principal.compare, caller) != null) { return #Err(#TransferFailed) };
-    Map.add(pendingFundsActions, Principal.compare, caller, true);
+    if (isPendingFundsLocked(caller)) { return #Err(#TransferFailed) };
+    setPendingFunds(caller);
 
     let amount = seat.stack;
     seat.occupant := null;
@@ -672,7 +728,7 @@ actor self {
     if (payout > 0) {
       await refundOrQueue(caller, payout);
     };
-    Map.remove(pendingFundsActions, Principal.compare, caller);
+    clearPendingFunds(caller);
     #Ok(payout);
   };
 
@@ -711,10 +767,10 @@ actor self {
       case null { return #Err(#SeatOutOfRange) };
     };
     if (t.phase != #WaitingForPlayers) { return #Err(#WrongBuyInAmount) };
-    if (Map.get(pendingFundsActions, Principal.compare, caller) != null) {
+    if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
-    Map.add(pendingFundsActions, Principal.compare, caller, true);
+    setPendingFunds(caller);
     let Ledger = ledger();
     let result = try {
       await Ledger.icrc2_transfer_from({
@@ -727,7 +783,7 @@ actor self {
         created_at_time = null;
       });
     } catch (_e) { #Err(#TemporarilyUnavailable) };
-    Map.remove(pendingFundsActions, Principal.compare, caller);
+    clearPendingFunds(caller);
     switch (result) {
       case (#Ok(_)) { t.seats[seatIndex].stack += amount; #Ok(()) };
       case (#Err(e)) { #Err(#TransferFailed(e)) };
@@ -1959,17 +2015,14 @@ actor self {
   };
 
   // 2026-09-10 recovery lever: clears a principal's pendingFundsActions
-  // entry. That guard exists to stop a double-submitted join/leave/top-up
-  // racing itself, but a same-day bug (now fixed at the source, see the
-  // try/catch on joinPublicTable/joinPrivateTable's own triggerDeal call)
-  // could leave a principal locked in it forever if that specific call
-  // failed uncaught after a join had already succeeded -- every future
-  // join for that principal, on ANY table, then permanently returns
-  // TransferFailed/TemporarilyUnavailable. Safe to call speculatively:
-  // a no-op if the principal wasn't actually stuck.
+  // entry immediately. Since 2026-09-12 this lock also self-expires on its
+  // own after PENDING_FUNDS_TIMEOUT_NANOS (see isPendingFundsLocked's own
+  // comment) -- this manual lever is now just for impatient/immediate
+  // relief rather than the only way out. Safe to call speculatively: a
+  // no-op if the principal wasn't actually stuck.
   public shared ({ caller }) func adminClearPendingFunds(target : Principal) : async () {
     requireController(caller);
-    Map.remove(pendingFundsActions, Principal.compare, target);
+    clearPendingFunds(target);
   };
 
   // Admin override to force a stuck/misbehaving seat out, bypassing the
