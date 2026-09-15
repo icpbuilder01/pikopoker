@@ -989,6 +989,32 @@ actor self {
     };
   };
 
+  // Self-service version of adminClearPendingFunds, for a player who hits
+  // the pendingFundsActions lock (see isPendingFundsLocked above) and can't
+  // reach an admin to clear it by hand -- e.g. on a phone, away from a
+  // terminal. Safe by construction: it can only ever clear an entry that
+  // isPendingFundsLocked ALREADY treats as expired (same
+  // PENDING_FUNDS_TIMEOUT_NANOS check, same clock), so it can never race a
+  // genuinely still-in-flight join/leave/topUp for this caller -- it's not
+  // a way to jump the timeout early, just a way to not have to wait for a
+  // retry to notice the lock already lapsed. Returns true if something was
+  // actually stuck-and-cleared, false if there was nothing to clear
+  // (already clear, or the lock is real and hasn't lapsed yet).
+  public shared ({ caller }) func clearMyStuckPendingFunds() : async Bool {
+    if (Principal.isAnonymous(caller)) { return false };
+    switch (Map.get(pendingFundsSince, Principal.compare, caller)) {
+      case null { false };
+      case (?since) {
+        if (Time.now() - since >= PENDING_FUNDS_TIMEOUT_NANOS) {
+          clearPendingFunds(caller);
+          true;
+        } else {
+          false;
+        };
+      };
+    };
+  };
+
   public shared ({ caller }) func sitOut(tableId : Nat, sittingOut : Bool) : async { #Ok; #Err : Types.ActionError } {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NotSeated) } };
     let seatIndex = switch (findSeat(t, caller)) { case (?i) { i }; case null { return #Err(#NotSeated) } };

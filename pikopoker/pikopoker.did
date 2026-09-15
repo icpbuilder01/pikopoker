@@ -170,6 +170,7 @@ service : {
                                     Ok;
                                   });
   claimPendingPayout: () -> (TransferResult);
+  clearMyStuckPendingFunds: () -> (bool);
   createPrivateTable: (name: text, buyIn: nat) ->
    (variant {
       Err: CreatePrivateError;

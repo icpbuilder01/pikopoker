@@ -32,6 +32,7 @@ function App() {
   const [balance, setBalance] = useState<bigint | null>(null);
   const [view, setView] = useState<View>(() => viewFromLocation());
   const [claimMessage, setClaimMessage] = useState<string | null>(null);
+  const [unstickMessage, setUnstickMessage] = useState<string | null>(null);
   const [showWallet, setShowWallet] = useState(false);
   const [showRules, setShowRules] = useState(false);
 
@@ -148,6 +149,24 @@ function App() {
     }
   }
 
+  // Self-service unstick for the pendingFundsActions lock (see
+  // clearMyStuckPendingFunds's own comment in main.mo) -- safe to expose as
+  // a plain button because the backend only ever clears an entry it already
+  // treats as expired, so this can't jump the queue on a genuinely
+  // in-flight join/leave/top-up, only save a player from having to guess
+  // when it's safe to retry (useful away from a computer, e.g. on a phone).
+  async function handleClearStuckLock() {
+    if (!identity) return;
+    setUnstickMessage("Checking...");
+    try {
+      const cleared = await getPikopokerActor(identity).clearMyStuckPendingFunds();
+      setUnstickMessage(cleared ? "Cleared -- try your action again." : "Nothing stuck right now.");
+    } catch (err) {
+      console.error("Clear stuck lock failed", err);
+      setUnstickMessage("Couldn't check -- try again later.");
+    }
+  }
+
   return (
     <main className={`page${view.type === "table" ? " in-table" : ""}`}>
       {showWallet && identity && (
@@ -238,6 +257,11 @@ function App() {
               Claim a stuck payout
             </button>
             {claimMessage && <span> -- {claimMessage}</span>}
+            {" "}&middot;{" "}
+            <button className="footer-link" onClick={handleClearStuckLock}>
+              Stuck on "still finishing"? Clear it
+            </button>
+            {unstickMessage && <span> -- {unstickMessage}</span>}
           </p>
         )}
       </footer>
