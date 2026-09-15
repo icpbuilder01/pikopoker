@@ -227,6 +227,10 @@ function joinErrorMessage(err: JoinError): string {
       const inner = err.TransferFailed;
       if (inner.__kind__ === "InsufficientAllowance") return "Approval didn't cover the buy-in -- try again.";
       if (inner.__kind__ === "InsufficientFunds") return "Not enough PIKO balance to cover the buy-in.";
+      // Also covers a same-account lock from a very recent join/leave/top-up
+      // still finishing up, not just a real ledger hiccup -- either way this
+      // clears itself within a few seconds normally.
+      if (inner.__kind__ === "TemporarilyUnavailable") return "Still finishing your last action -- wait a few seconds and try again.";
       return "Transfer failed -- try again.";
     }
     default:
