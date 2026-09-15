@@ -90,7 +90,7 @@ actor self {
   // (excluded from being dealt in, so it never gets a turn to time out) --
   // so it could occupy a seat forever, blocking a spot on an otherwise-full
   // table, with no automatic recovery at all until now.
-  let SIT_OUT_TIMEOUT_NANOS : Int = 10 * 60 * 1_000_000_000;
+  let SIT_OUT_TIMEOUT_NANOS : Int = 15 * 60 * 1_000_000_000;
   // Halved from 2s (2026-09-09) to shave the worst-case slack off every
   // timer-driven transition (action timeouts, the Showdown pause, dealing
   // the next hand) -- tick() itself is cheap when idle (a handful of Map
