@@ -81,6 +81,16 @@ actor self {
   // (fewer than 2 active seats, so no hand can ever be dealt) before its
   // seat(s) are auto-vacated -- see soloIdleSince's own comment below.
   let SOLO_IDLE_TIMEOUT_NANOS : Int = 10 * 60 * 1_000_000_000;
+  // 2026-09-16: how long a single SEAT may stay sittingOut (voluntary or
+  // auto-triggered on a zero stack) before it's individually vacated --
+  // distinct from SOLO_IDLE_TIMEOUT_NANOS above, which only fires when the
+  // whole table has fewer than 2 active seats. A sittingOut seat sitting
+  // next to 2+ other ACTIVE seats never trips that check (the table keeps
+  // dealing hands fine without it) and never trips afkTimeouts either
+  // (excluded from being dealt in, so it never gets a turn to time out) --
+  // so it could occupy a seat forever, blocking a spot on an otherwise-full
+  // table, with no automatic recovery at all until now.
+  let SIT_OUT_TIMEOUT_NANOS : Int = 10 * 60 * 1_000_000_000;
   // Halved from 2s (2026-09-09) to shave the worst-case slack off every
   // timer-driven transition (action timeouts, the Showdown pause, dealing
   // the next hand) -- tick() itself is cheap when idle (a handful of Map
@@ -203,6 +213,9 @@ actor self {
   func resetAfkTimeouts(tableId : Nat, seatIndex : Nat) {
     Map.remove(afkTimeouts, Text.compare, afkKey(tableId, seatIndex));
   };
+  func resetSittingOutSince(tableId : Nat, seatIndex : Nat) {
+    Map.remove(sittingOutSince, Text.compare, afkKey(tableId, seatIndex));
+  };
   // 2026-09-12: real bug reported live -- the dev found 2 of his own idle
   // accounts still occupying a table hours after he'd stopped playing.
   // Root cause: `afkTimeouts` above only ever counts turns resolved by a
@@ -227,6 +240,22 @@ actor self {
   // (`inHand` is always false) -- unlike the in-hand afkTimeouts case,
   // there's no auto-fold/auto-check distinction to make.
   let soloIdleSince : Map.Map<Nat, Int> = Map.empty<Nat, Int>();
+  // 2026-09-16: per-SEAT counterpart to soloIdleSince above -- see
+  // SIT_OUT_TIMEOUT_NANOS's own comment for the gap this closes. Same safe-
+  // EOP "pure top-level map addition" pattern, keyed by table id + seat
+  // index (afkKey, same key shape as afkTimeouts, tied to the physical
+  // seat slot not the occupant). Set the instant a seat becomes
+  // sittingOut (by the player's own sitOut(true) call, or automatically on
+  // a zero stack at Showdown cleanup), cleared the instant it stops being
+  // sittingOut (sitOut(false), or the seat is vacated) -- so a player who
+  // only steps away briefly and comes back well within the window is never
+  // penalized. Only ever consulted for a seat that is ALSO not `inHand`
+  // (maybeCleanupSittingOutSeats' own check) -- a seat can be sittingOut
+  // while still `inHand` (mid-hand toggle, see sitOut's own comment), and
+  // vacating a live contestant out from under an in-progress hand would
+  // wrongly delete their claim on the pot, same hazard afkTimeouts' own
+  // auto-CHECK-must-queue distinction already exists to avoid.
+  let sittingOutSince : Map.Map<Text, Int> = Map.empty<Text, Int>();
   // A failed payout (cash-out or, in principle, a refund) is recorded here
   // rather than silently lost -- retryable via claimPendingPayout, same
   // pattern mother/dice already use for a failed transfer after funds
@@ -870,6 +899,7 @@ actor self {
       seat.stack := 0;
       seat.sittingOut := false;
       resetAfkTimeouts(t.id, seatIndex);
+      resetSittingOutSince(t.id, seatIndex);
       return #Ok(0);
     };
 
@@ -881,6 +911,7 @@ actor self {
     seat.stack := 0;
     seat.sittingOut := false;
     resetAfkTimeouts(t.id, seatIndex);
+    resetSittingOutSince(t.id, seatIndex);
 
     let Ledger = ledger();
     let fee = try { await Ledger.icrc1_fee() } catch (_e) { 10_000 };
@@ -1019,6 +1050,11 @@ actor self {
     let t = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t }; case null { return #Err(#NotSeated) } };
     let seatIndex = switch (findSeat(t, caller)) { case (?i) { i }; case null { return #Err(#NotSeated) } };
     t.seats[seatIndex].sittingOut := sittingOut;
+    if (sittingOut) {
+      Map.add(sittingOutSince, Text.compare, afkKey(tableId, seatIndex), Time.now());
+    } else {
+      Map.remove(sittingOutSince, Text.compare, afkKey(tableId, seatIndex));
+    };
     // Sitting back in can be exactly what brings a WaitingForPlayers table
     // back up to 2 active seats -- try dealing right away rather than
     // waiting on the timer (see maybeDealNow's own comment). The
@@ -1349,6 +1385,43 @@ actor self {
     };
   };
 
+  // 2026-09-16: per-seat counterpart to maybeCleanupIdleSeats above -- see
+  // SIT_OUT_TIMEOUT_NANOS/sittingOutSince's own comments for the gap this
+  // closes (a sittingOut seat sitting next to 2+ other active seats never
+  // trips the table-level check above). Deliberately NOT gated on
+  // `t.phase == #WaitingForPlayers` -- unlike maybeCleanupIdleSeats, this
+  // has to keep working while OTHER seats are mid-hand in any phase, since
+  // that's exactly the scenario it exists for. Per-seat safety instead:
+  // only ever vacates a seat that is sittingOut AND not inHand, which is
+  // exactly the same invariant leaveTable's own immediate-vs-#Queued check
+  // already relies on -- a seat that's sittingOut but still inHand (a
+  // mid-hand toggle) is left alone here and picked up naturally once that
+  // hand ends (inHand goes false at the next deal or a real fold/leave).
+  func maybeCleanupSittingOutSeats(t : Types.Table) : async* () {
+    var i = 0;
+    while (i < t.seats.size()) {
+      let s = t.seats[i];
+      let key = afkKey(t.id, i);
+      if (s.occupant != null and s.sittingOut and not s.inHand) {
+        switch (Map.get(sittingOutSince, Text.compare, key)) {
+          case null { Map.add(sittingOutSince, Text.compare, key, Time.now()) };
+          case (?since) {
+            if (Time.now() - since >= SIT_OUT_TIMEOUT_NANOS) {
+              switch (s.occupant) {
+                case (?p) { ignore (await* doLeave(t, i, p)) };
+                case null {};
+              };
+              Map.remove(sittingOutSince, Text.compare, key);
+            };
+          };
+        };
+      } else {
+        Map.remove(sittingOutSince, Text.compare, key);
+      };
+      i += 1;
+    };
+  };
+
   // 2026-09-10: extracted from tick()'s own #Showdown case (still used
   // from there too) so `triggerDeal` below can also perform this cleanup
   // directly, not just the backend timer. Real incident: the timer
@@ -1367,13 +1440,19 @@ actor self {
     if (t.phase != #Showdown) { return };
     let at = switch (t.nextHandAt) { case (?at) { at }; case null { return } };
     if (Time.now() < at) { return };
-    for (s in t.seats.vals()) {
+    var i = 0;
+    while (i < t.seats.size()) {
+      let s = t.seats[i];
       s.inHand := false;
       s.hasFolded := false;
       s.isAllIn := false;
       s.committedThisHand := 0;
       s.committedThisRound := 0;
-      if (s.stack == 0 and s.occupant != null) { s.sittingOut := true };
+      if (s.stack == 0 and s.occupant != null) {
+        s.sittingOut := true;
+        Map.add(sittingOutSince, Text.compare, afkKey(t.id, i), Time.now());
+      };
+      i += 1;
     };
     t.board := [];
     t.lastResult := null;
@@ -1495,6 +1574,7 @@ actor self {
         await* maybeCleanupShowdown(t);
         await* maybeDealNow(t);
         await* maybeCleanupIdleSeats(t);
+        await* maybeCleanupSittingOutSeats(t);
         await* maybeEnforceActionTimeout(t);
       };
       case null {};
@@ -1912,6 +1992,11 @@ actor self {
     tickCount += 1;
     lastTickAt := Time.now();
     for ((_, t) in Map.entries(tables)) {
+      // Deliberately OUTSIDE the phase switch below, unlike every other
+      // per-table job here -- a sittingOut-but-not-inHand seat can exist
+      // regardless of what phase the table's other, active seats have it
+      // in (see maybeCleanupSittingOutSeats' own comment).
+      await* maybeCleanupSittingOutSeats(t);
       switch (t.phase) {
         case (#WaitingForPlayers) {
           // NOT a self-call here, unlike triggerDeal's other callers --
