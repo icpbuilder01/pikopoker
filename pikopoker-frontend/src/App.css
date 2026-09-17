@@ -2128,7 +2128,7 @@ section.block > *:last-child {
   /* Your own hole cards get to be bigger than everyone else's on mobile --
      your seat is always bottom-center now (see the seat-rotation entry)
      with open felt below it, not squeezed against neighbors the way a
-     side seat is, so there's real room to spend here. the dev asked for
+     side seat is, so there's real room to spend here. The dev asked for
      this directly; opponents' (still-tiny, face-down or shown at
      showdown) cards are untouched.
 

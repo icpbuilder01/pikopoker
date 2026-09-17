@@ -216,8 +216,8 @@ actor self {
   func resetSittingOutSince(tableId : Nat, seatIndex : Nat) {
     Map.remove(sittingOutSince, Text.compare, afkKey(tableId, seatIndex));
   };
-  // 2026-09-12: real bug reported live -- the dev found 2 of his own idle
-  // accounts still occupying a table hours after he'd stopped playing.
+  // 2026-09-12: real bug reported live -- the dev found 2 of their own idle
+  // accounts still occupying a table hours after they'd stopped playing.
   // Root cause: `afkTimeouts` above only ever counts turns resolved by a
   // LIVE HAND's own action-timeout, but `dealNextHand`'s own `active.size()
   // < 2` guard means no hand is EVER dealt while fewer than 2 seats are
@@ -1477,7 +1477,7 @@ actor self {
   // Also implements the dev's second ask here: 4 consecutive turns
   // resolved by this timeout (not a real action -- see afkTimeouts' own
   // comment in types.mo) force-vacates the seat, so an AFK player can't
-  // sit occupying a seat indefinitely (his own framing: "pour eviter
+  // sit occupying a seat indefinitely (their own framing: "pour eviter
   // qu'un joueur afk bloque une table publique"). Auto-FOLD (already
   // not live in the current hand) is safe to vacate immediately, same
   // guarantee leaveTable's own hasFolded check already relies on for a
