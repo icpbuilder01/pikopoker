@@ -1294,7 +1294,19 @@ section.block > *:last-child {
 
 .chip-badge.flip {
   order: -1;
-  margin-top: 0;
+  /* 2026-09-15: real bug, reported live with a genuine side pot again --
+     the 2026-09-12 fix (dropping the flipped badge's own --bet-y nudge)
+     only ever left ~2px of real clearance against .felt-pots at the felt
+     size tested that day; this badge and .felt-pots are laid out by two
+     independent systems (seatPosition()'s percentage math vs
+     .felt-center's own centered flex flow) that only "happen" not to
+     collide at a given felt size, not by any actual layout constraint --
+     so any felt resize (here: narrower once the desktop 3-column layout
+     shipped) can re-break it. Explicit margin this time, instead of
+     relying on incidental spacing, so it survives the next felt resize
+     too. Verified via a real getBoundingClientRect measurement (not
+     eyeballed) after this change -- see the commit message for numbers. */
+  margin-top: 16px;
   margin-bottom: 3px;
 }
 
@@ -1822,8 +1834,13 @@ section.block > *:last-child {
    switches this to a floating overlay instead -- no separate markup,
    same component, CSS-only per breakpoint. */
 @media (min-width: 641px) {
+  /* 2026-09-15, widened further: the dev flagged real unused gutter space
+     at wide desktop widths (was 1280px, plenty of blank margin left on a
+     ~1850px screen) -- the felt itself gets the extra room (via its own
+     max-width below, growing from ~848px to ~1000px at this cap), not
+     just wider empty padding. */
   .page.in-table {
-    max-width: 1280px;
+    max-width: 1520px;
   }
 
   .table-layout {
@@ -1847,6 +1864,15 @@ section.block > *:last-child {
 
   .felt-wrap {
     grid-column: 2;
+    /* Capped rather than left to grow all the way to the grid track's own
+       width -- unbounded growth on an ultrawide monitor would also grow
+       the felt's height (fixed 16/10 aspect-ratio), risking the page
+       needing to scroll again, which the whole point of this layout was
+       to avoid. Centered within its column past this width instead of
+       stretching. */
+    max-width: 1000px;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .action-bar.modern {
