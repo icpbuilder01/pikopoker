@@ -246,6 +246,25 @@ actor self {
   // deal" incidents (2026-09-05, and reported again today).
   let dealingTables : Map.Map<Nat, Bool> = Map.empty<Nat, Bool>();
 
+  // 2026-09-15: real bug reported live -- seatView's revealCards check
+  // only ever tested `t.phase == #Showdown`, but BOTH endHandByFold
+  // (everyone else folded, nobody chose to show) and endHandShowdown (a
+  // real multi-way showdown) set that same phase -- so an uncontested
+  // fold-win revealed the winner's cards to the very player who folded,
+  // which real poker never does (a folded hand is mucked, and an
+  // uncontested winner is never required to show either). New top-level
+  // map, same safe-EOP "pure addition" pattern as pendingLeaves/
+  // afkTimeouts/etc. above -- NOT a new field directly on `Types.Table`,
+  // which would trap on upgrade for every table that already exists on
+  // mainnet (see afkTimeouts' own comment on this exact class of
+  // mistake). Present + true only after a genuine endHandShowdown;
+  // absent (treated as false) otherwise, including the entire
+  // WaitingForPlayers/PreFlop/Flop/Turn/River span of every hand.
+  let realShowdownTables : Map.Map<Nat, Bool> = Map.empty<Nat, Bool>();
+  func isRealShowdown(tableId : Nat) : Bool {
+    Map.get(realShowdownTables, Nat.compare, tableId) == ?true;
+  };
+
   // 2026-09-15: per-table chat, requested by the dev. Messages expire
   // after 24h to bound cycles/memory growth -- deliberately done by
   // LAZY filtering (on every read AND on every send, never via a Timer/
@@ -384,8 +403,17 @@ actor self {
     // live at Showdown (didn't fold) should have their cards revealed to
     // everyone; the seat's own occupant can always see their own cards
     // either way, folded or not.
+    //
+    // 2026-09-15: real bug reported live, same area -- an UNCONTESTED win
+    // (everyone else folds) also reaches phase == #Showdown (see
+    // endHandByFold), so the fix above still revealed the winner's cards
+    // to the very player who'd just folded -- real poker never requires
+    // an uncontested winner to show. Added isRealShowdown(t.id): only a
+    // genuine multi-way endHandShowdown sets it, so an uncontested win
+    // now withholds cards from everyone but the winner themselves, same
+    // as a real table where nobody asked to see a mucked/uncontested hand.
     let revealCards = switch (seat.occupant) {
-      case (?o) { o == caller or (t.phase == #Showdown and not seat.hasFolded) };
+      case (?o) { o == caller or (t.phase == #Showdown and isRealShowdown(t.id) and not seat.hasFolded) };
       case null { false };
     };
     {
@@ -1163,6 +1191,12 @@ actor self {
     };
 
     t.phase := #PreFlop;
+    // Defensive, not load-bearing -- revealCards already requires phase
+    // == #Showdown too, so a stale realShowdownTables entry couldn't leak
+    // anything during PreFlop/Flop/Turn/River regardless. Cleared here
+    // anyway, same "explicit over merely implicit" spirit as
+    // endHandByFold's own remove.
+    Map.remove(realShowdownTables, Nat.compare, t.id);
     t.toAct := liveNow.size();
     let firstToAct = switch (nextOccupiedFrom(t, bbSeat, true)) { case (?s) { s }; case null { bbSeat } };
     setActing(t, ?firstToAct);
@@ -1672,6 +1706,12 @@ actor self {
         t.lastResult := ?("Won uncontested"); // caller-facing name resolution happens in the frontend, which already knows the principal
       };
     };
+    // Explicit remove, not just "never added" -- a table that already had
+    // a real showdown earlier could theoretically still have a stale true
+    // here if dealNextHand's own reset (see below) were ever skipped;
+    // removing here too costs nothing and keeps this path correct on its
+    // own regardless of that.
+    Map.remove(realShowdownTables, Nat.compare, t.id);
     t.phase := #Showdown;
     t.nextHandAt := ?(Time.now() + HAND_PAUSE_NANOS);
   };
@@ -1710,6 +1750,7 @@ actor self {
       };
     };
     t.lastResult := ?("Showdown complete");
+    Map.add(realShowdownTables, Nat.compare, t.id, true);
     t.phase := #Showdown;
     t.nextHandAt := ?(Time.now() + HAND_PAUSE_NANOS);
   };
