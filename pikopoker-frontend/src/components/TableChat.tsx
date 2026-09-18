@@ -11,35 +11,61 @@ interface TableChatProps {
 }
 
 const CHAT_POLL_MS = 2500;
+const CHAT_IDLE_POLL_MS = 15000;
 const CHAT_MAX_LEN = 240;
 
-// 2026-09-15: per-table chat, requested by the dev. Deliberately only
-// polls (and only renders its message list) while `open` -- closed by
-// default on both desktop and mobile -- so a table nobody has chat open
-// on costs nothing beyond the one-time mount, matching the "save cycles"
-// ask directly (this is the frontend half of the same reasoning behind
-// the backend's lazy 24h expiry, see tableChats' own comment in main.mo).
+// 2026-09-15: per-table chat, requested by the dev. Only renders its
+// message list while `open` -- closed by default on both desktop and
+// mobile. Originally didn't poll at ALL while closed (matching the "save
+// cycles" ask directly, same reasoning as the backend's lazy 24h expiry,
+// see tableChats' own comment in main.mo) -- but the dev then asked for
+// an unread-message dot on the closed toggle, which needs SOME way to
+// notice new messages while closed. Compromise: still poll while closed,
+// just much less often (15s vs 2.5s open) -- a real reduction from
+// constant fast polling, just not the original zero.
 export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hasUnread, setHasUnread] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Latest message timestamp the viewer has actually seen (panel open at
+  // the time it arrived) -- a message newer than this while closed is
+  // what lights up the dot. Not persisted (per-mount only, same lifetime
+  // as the rest of this component's state) -- reopening the table later
+  // just treats whatever's already there as unseen again, which is fine,
+  // the dot is a "something happened while you weren't looking" nudge,
+  // not a durable read-receipt system.
+  const lastSeenTimestampRef = useRef<bigint>(0n);
+  // The very first poll after mount establishes the baseline (whatever's
+  // already in the table's chat history counts as "seen", not a pile of
+  // unread from before this viewer ever loaded the page) -- only messages
+  // that arrive in a LATER poll, while closed, actually light the dot.
+  const hasPolledOnceRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
     async function poll() {
       try {
         const msgs = await getPikopokerActor().getTableChat(tableId);
-        if (!cancelled) setMessages(msgs);
+        if (cancelled) return;
+        setMessages(msgs);
+        const latest = msgs.length > 0 ? msgs[msgs.length - 1].timestamp : 0n;
+        if (open || !hasPolledOnceRef.current) {
+          lastSeenTimestampRef.current = latest;
+          setHasUnread(false);
+        } else {
+          setHasUnread(latest > lastSeenTimestampRef.current);
+        }
+        hasPolledOnceRef.current = true;
       } catch (err) {
         console.error("getTableChat failed", err);
       }
     }
     poll();
-    const id = setInterval(poll, CHAT_POLL_MS);
+    const id = setInterval(poll, open ? CHAT_POLL_MS : CHAT_IDLE_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -65,6 +91,7 @@ export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps
         setText("");
         const msgs = await getPikopokerActor().getTableChat(tableId);
         setMessages(msgs);
+        if (msgs.length > 0) lastSeenTimestampRef.current = msgs[msgs.length - 1].timestamp;
       }
     } catch (err) {
       console.error("sendTableChat failed", err);
@@ -80,10 +107,11 @@ export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps
         type="button"
         className="table-chat-toggle"
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Close table chat" : "Open table chat"}
+        aria-label={open ? "Close table chat" : hasUnread ? "Open table chat -- unread messages" : "Open table chat"}
         aria-expanded={open}
       >
         {open ? "✕" : "💬"}
+        {!open && hasUnread && <span className="table-chat-unread-dot" aria-hidden="true" />}
       </button>
       {open && (
         <div className="table-chat-panel">

@@ -89,6 +89,18 @@ function seatAngle(index: number, total: number): number {
 // measurement while fixing this: a shared 80px margin cleared the header
 // but reproduced the exact same overlap one layer further in, against
 // felt-center. Use the smallest margin each seat actually needs.
+//
+// 2026-09-15: tried bumping this constant to 115 first to fix a real
+// reported felt-center/own-cards collision -- WRONG DIRECTION. This
+// clamp's whole job is pulling a seat back IN when it's too close to the
+// felt's OUTER edge (its ceiling is `100 - marginPct`, i.e. it only ever
+// pulls "me" toward center, never pushes it away). A bigger constant
+// here pulls "me" MORE toward center, the wrong direction when the
+// actual problem is felt-center's own content growing tall enough to
+// reach down toward "me" -- confirmed by measurement: a 35px-larger
+// constant moved "me"'s cards by only ~6px, the wrong way. Left at its
+// original, still-correct 80; the fix that actually worked is `ry`'s own
+// liftMe trim below.
 const SEAT_CARD_HALF_HEIGHT_ME_PX = 80;
 const SEAT_CARD_HALF_HEIGHT_OTHER_PX = 46;
 function seatPosition(
@@ -98,7 +110,20 @@ function seatPosition(
   feltHeightPx?: number,
 ): { top: string; left: string; dirX: number; dirY: number } {
   const rx = compact ? 36 : 44;
-  const ry = (compact ? 34 : 40) - (liftMe ? (compact ? 6 : 9) : 0);
+  // 2026-09-15: compact liftMe trimmed 6 -> 1 -- real bug, reproduced via
+  // measurement. A genuine Showdown grows felt-center tall enough (phase
+  // label + board + a pot pill + a result pill, all at once) to reach
+  // down into "me"'s own hole cards at mobile's tight felt height --
+  // pulling "me" this far IN toward center was too much once felt-center
+  // needs real room too, not just clearance from the felt's own outer
+  // edge (the original 2026-09-10 problem this lift was built for, still
+  // handled by the feltHeightPx clamp below regardless of this trim).
+  // Verified live after trimming: a real all-in showdown at 390x844 went
+  // from a ~6px overlap to ~19px of clear gap (felt-result's own bottom
+  // edge vs "me"'s hole cards, measured via getBoundingClientRect), with
+  // "me" still 33px clear of the felt's own bottom edge -- the original
+  // overflow this lift prevents didn't come back either.
+  const ry = (compact ? 34 : 40) - (liftMe ? (compact ? 1 : 9) : 0);
   const left = 50 + rx * Math.cos(angle);
   let top = 50 + ry * Math.sin(angle);
   if (feltHeightPx && feltHeightPx > 0) {
@@ -295,7 +320,20 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
     // felt-slot ResizeObserver this replaces.
   }, [viewLoaded]);
   const lastTurnKeyRef = useRef<string>("");
-  const prevStackRef = useRef<bigint | null>(null);
+  // 2026-09-15: real bug reported live -- comparing against whatever
+  // stack a poll happened to observe last (poll-to-poll delta, ~700ms
+  // apart) is a race against how fast a hand can actually resolve. An
+  // all-in has no further action once called -- the board runs out and
+  // the hand resolves in the SAME update call, no awaits in between -- so
+  // an entire hand (deal -> all-in -> showdown) can complete faster than
+  // one polling interval, and the loser's own stack could be compared
+  // against a stale pre-hand snapshot instead of their actual all-in low
+  // point. Keyed off handNumber instead: the baseline is fixed to
+  // whatever this seat's stack was the FIRST time this specific hand's
+  // number was observed (i.e. right after blinds, before any further
+  // betting), so the comparison no longer depends on which polls
+  // happened to land where -- only on which hand is being compared.
+  const handStartStackRef = useRef<{ handNumber: bigint; stack: bigint } | null>(null);
   const prevResultRef = useRef<string | undefined>(undefined);
   const prevSoundViewRef = useRef<TableView | null>(null);
   const [muted, setMutedState] = useState(() => isMuted());
@@ -379,24 +417,27 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   // Infer a win purely from my own stack going up right as a result posts --
   // the backend only exposes a human-readable lastResult string, no
   // structured per-seat payout, so this is a heuristic, not ground truth.
+  // See handStartStackRef's own comment above on why the baseline is keyed
+  // to handNumber rather than the previous poll's raw stack value.
   useEffect(() => {
     if (!view || !myPrincipalText) return;
     const seat = view.seats.find((s) => s.occupant?.toText() === myPrincipalText);
     if (!seat) {
-      prevStackRef.current = null;
+      handStartStackRef.current = null;
       prevResultRef.current = view.lastResult;
       return;
+    }
+    if (!handStartStackRef.current || handStartStackRef.current.handNumber !== view.handNumber) {
+      handStartStackRef.current = { handNumber: view.handNumber, stack: seat.stack };
     }
     if (
       view.lastResult !== undefined &&
       view.lastResult !== prevResultRef.current &&
-      prevStackRef.current !== null &&
-      seat.stack > prevStackRef.current
+      seat.stack > handStartStackRef.current.stack
     ) {
       setConfettiTrigger((n) => n + 1);
       playWinSound();
     }
-    prevStackRef.current = seat.stack;
     prevResultRef.current = view.lastResult;
   }, [view, myPrincipalText]);
 

@@ -1775,6 +1775,7 @@ section.block > *:last-child {
 }
 
 .table-chat-toggle {
+  position: relative;
   font-size: 1.1rem;
   line-height: 1;
   padding: 8px;
@@ -1790,6 +1791,17 @@ section.block > *:last-child {
   border-right-color: var(--bevel-lo);
   box-shadow: 3px 3px 0 var(--hard-shadow);
   cursor: pointer;
+}
+
+.table-chat-unread-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--critical);
+  border: 2px solid var(--surface);
 }
 
 .table-chat-panel {
@@ -1871,7 +1883,14 @@ section.block > *:last-child {
        this column eats that slack directly rather than the felt's own
        (deliberately capped, see .felt-wrap's own comment) width. */
     grid-template-columns: auto minmax(0, 1fr) 400px;
-    align-items: stretch;
+    /* 2026-09-15: was `stretch` briefly -- the dev wanted the dead space
+       actually REMOVED, not just relocated below the betting controls
+       (stretch still gives .action-bar.modern the felt's full height as
+       its box, so it left an empty gap regardless of gap/justify-content
+       tuning). Back to `start`: the panel now sizes to its own content,
+       same as .felt-wrap always did (aspect-ratio-driven, unaffected by
+       either value) and .table-chat (a 40px toggle either way). */
+    align-items: start;
     gap: 16px;
   }
 
@@ -1903,14 +1922,12 @@ section.block > *:last-child {
   .action-bar.modern {
     grid-column: 3;
     margin-bottom: 0;
-    /* 2026-09-15: space-between (tried first) spread the seat/stack row
-       and the betting controls across the felt's FULL stretched height --
-       the dev flagged the resulting gap between "Sit out/Leave" and
-       "Pot/To call" as too loose. Back to a normal small gap so those two
-       groups sit close together like before; any leftover height (from
-       align-items: stretch above) just falls below the betting controls
-       now instead of splitting the groups apart. Padding/font sizes stay
-       bumped, that part read correctly as "bigger". */
+    /* 2026-09-15: went through space-between (spread content across a
+       stretched full-height box, too loose a gap) before landing here --
+       now the panel just sizes to its own content (table-layout's
+       align-items: start above), no forced empty space anywhere in it.
+       Padding/font sizes stay bumped from the earlier "make it bigger"
+       pass, that part read correctly. */
     padding: 22px 24px;
     gap: 16px;
   }
