@@ -1845,8 +1845,13 @@ section.block > *:last-child {
 
   .table-layout {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) 320px;
-    align-items: start;
+    /* 400px, up from 320px -- the dev flagged real leftover width even
+       after the felt's own 1520px page cap above (felt maxes at 1000px,
+       so there's still slack at typical wide-desktop sizes); widening
+       this column eats that slack directly rather than the felt's own
+       (deliberately capped, see .felt-wrap's own comment) width. */
+    grid-template-columns: auto minmax(0, 1fr) 400px;
+    align-items: stretch;
     gap: 16px;
   }
 
@@ -1878,6 +1883,56 @@ section.block > *:last-child {
   .action-bar.modern {
     grid-column: 3;
     margin-bottom: 0;
+    /* Stretches to match the felt's height (see .table-layout's
+       align-items: stretch above) instead of sizing to its own content
+       and leaving dead space below -- space-between spreads the two
+       content groups (seat/stack row, betting controls) across that
+       full height instead of clumping at the top. Padding/gaps/font
+       sizes bumped a step too, matching "make the panel itself bigger"
+       -- separate from the stretch, which alone would've just meant more
+       *empty* space, not a genuinely bigger-reading panel. */
+    padding: 22px 24px;
+    gap: 20px;
+    justify-content: space-between;
+  }
+
+  .action-bar-seat-row {
+    gap: 14px;
+  }
+
+  .bet-info-tile {
+    padding: 12px 20px;
+    min-width: 130px;
+  }
+
+  .bet-info-label {
+    font-size: 0.74rem;
+  }
+
+  .bet-info-value {
+    font-size: 1.35rem;
+  }
+
+  .action-bar.modern .action-buttons .button {
+    padding: 16px 20px;
+    font-size: 1.08rem;
+  }
+
+  .bet-presets-label {
+    font-size: 0.76rem;
+  }
+
+  .bet-preset {
+    padding: 12px 18px;
+    min-width: 96px;
+  }
+
+  .bet-preset-label {
+    font-size: 0.72rem;
+  }
+
+  .bet-preset .chip-amount {
+    font-size: 0.95rem;
   }
 
   .table-chat-panel {
