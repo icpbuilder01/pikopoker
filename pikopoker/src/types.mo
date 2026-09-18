@@ -62,7 +62,7 @@ module {
 
   // ---- Table / game state ----
 
-  public let MAX_SEATS : Nat = 8;
+  public let MAX_SEATS : Nat = 6;
 
   public type TableKind = { #Public; #Private : { code : Text } };
 
