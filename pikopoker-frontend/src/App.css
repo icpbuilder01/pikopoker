@@ -1866,13 +1866,18 @@ section.block > *:last-child {
    switches this to a floating overlay instead -- no separate markup,
    same component, CSS-only per breakpoint. */
 @media (min-width: 641px) {
-  /* 2026-09-15, widened further: the dev flagged real unused gutter space
-     at wide desktop widths (was 1280px, plenty of blank margin left on a
-     ~1850px screen) -- the felt itself gets the extra room (via its own
-     max-width below, growing from ~848px to ~1000px at this cap), not
-     just wider empty padding. */
+  /* 2026-09-15, widened further still: the dev flagged real unused
+     gutter space remaining even at 1520px on a ~1860px-wide window
+     (~390px combined). Felt's own max-width grows alongside this (see
+     .felt-wrap below, 1000px -> 1050px) so some of the extra room goes
+     to the table itself, not just wider empty padding either side of
+     it -- kept deliberately modest here (not matched 1:1 to the full
+     ~390px of spare width) because the felt's fixed 16/10 aspect-ratio
+     means more WIDTH also means more HEIGHT, and this whole layout's
+     point was fitting one screen without scrolling; checked against
+     window heights down to 950px before settling on this width. */
   .page.in-table {
-    max-width: 1520px;
+    max-width: 1580px;
   }
 
   .table-layout {
@@ -1913,8 +1918,14 @@ section.block > *:last-child {
        the felt's height (fixed 16/10 aspect-ratio), risking the page
        needing to scroll again, which the whole point of this layout was
        to avoid. Centered within its column past this width instead of
-       stretching. */
-    max-width: 1000px;
+       stretching. 1000px -> 1050px alongside .page.in-table's own widen
+       above -- height grows to ~656px (+31px). Tried 1120px first
+       (+75px height) but that DID reintroduce real vertical scroll at
+       realistic window heights (measured, not assumed: 105px of
+       overflow at 1861x950) -- dialed back to a smaller, actually-
+       verified-safe bump instead of chasing the full horizontal gutter
+       the dev pointed out. */
+    max-width: 1050px;
     margin-left: auto;
     margin-right: auto;
   }
