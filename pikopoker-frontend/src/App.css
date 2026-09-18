@@ -405,22 +405,74 @@ section.block > *:last-child {
      else keeps the beveled paper look. */
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
-  animation: card-deal 0.28s ease-out;
 }
 
-@keyframes card-deal {
-  from {
-    transform: translateY(-10px) scale(0.85);
+/* 2026-09-15: real request -- "faudrait une petite animation comme si la
+   carte se posait et se retournait", split from the old single card-deal
+   fade/slide into two distinct moments. A face-down card only ever LANDS
+   (a still-hidden opponent hole card, or the instant before a board card's
+   value is known) -- card-deal-land. A face-up card LANDS THEN FLIPS (own
+   hole cards, and every board card, which in this game always mounts
+   already holding its real value -- see TableRoom.tsx's board-array-growth
+   comment) -- card-deal-flip, landing motion plus a scaleX squash-to-
+   nothing-and-back standing in for the card turning edge-on to reveal its
+   face. Bound by class (face-down vs not) rather than a JS-driven trigger:
+   a genuine reveal always changes an element's class from face-down to a
+   suit color (or mounts fresh already showing that color, e.g. a newly
+   dealt board card), and changing which `animation-name` applies is what
+   actually (re)starts a CSS animation -- re-rendering with the SAME class
+   string, which happens on every ~700ms poll regardless of whether
+   anything changed, does NOT restart it, so this can't spam-replay. */
+.playing-card.face-down {
+  animation: card-deal-land 0.32s ease-out;
+}
+
+.playing-card:not(.face-down) {
+  animation: card-deal-flip 0.42s ease-out;
+}
+
+@keyframes card-deal-land {
+  0% {
+    transform: translateY(-14px) scale(0.88);
     opacity: 0;
   }
-  to {
+  65% {
+    transform: translateY(2px) scale(1.02);
+    opacity: 1;
+  }
+  100% {
     transform: translateY(0) scale(1);
     opacity: 1;
   }
 }
 
+@keyframes card-deal-flip {
+  0% {
+    transform: translateY(-14px) scale(0.88) scaleX(1);
+    opacity: 0;
+  }
+  45% {
+    transform: translateY(2px) scale(1.02) scaleX(1);
+    opacity: 1;
+  }
+  58% {
+    transform: translateY(0) scale(1) scaleX(0.04);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1) scaleX(1);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .playing-card {
+  /* Both land/flip rules above carry higher specificity (two class terms,
+     :not()'s argument counts toward it) than a plain `.playing-card`
+     override here would -- listed explicitly so this still wins instead
+     of silently losing the cascade and leaving the animation running. */
+  .playing-card,
+  .playing-card.face-down,
+  .playing-card:not(.face-down) {
     animation: none;
   }
 }
