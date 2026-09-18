@@ -11,6 +11,7 @@ import { ChipAmount } from "./ChipAmount";
 import { Confetti } from "./Confetti";
 import { Rules } from "./Rules";
 import { QrCode } from "./QrCode";
+import { TableChat } from "./TableChat";
 import {
   Phase,
   LeaveError,
@@ -502,6 +503,15 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       } else {
         setLeavePending(false);
         await refresh();
+        // 2026-09-15: a real cash-out leave can land its payout in
+        // pendingPayouts if the ledger transfer fails (see doLeave's own
+        // refundOrQueue call) -- sweep it right away instead of leaving it
+        // for the App-level login-time claim or a manual footer click, so
+        // a real-money leave never LOOKS stuck even for the few seconds
+        // until the next auto-sweep. Best-effort, silent: a normal leave
+        // (or Free Play, which never touches payouts at all) just finds
+        // nothing to claim.
+        getPikopokerActor(identity).claimPendingPayout().catch(() => {});
       }
     } catch (err) {
       console.error("Leave failed", err);
@@ -811,7 +821,16 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
       {view && (
         <>
-          {/* 2026-09-11/12: real bug, confirmed via measurement -- a seat
+          {/* 2026-09-15: desktop gets a 3-column layout (chat | felt |
+              betting panel) so the action bar sits beside the table
+              instead of below it -- no more scrolling the page every
+              turn. Mobile keeps the original stacked flow (table-layout
+              collapses to a plain column below 641px, see App.css) and
+              TableChat switches to a small floating toggle over the
+              felt's bottom-right corner instead of a sidebar. */}
+          <div className="table-layout">
+            <TableChat tableId={tableId} identity={identity} myPrincipalText={myPrincipalText} />
+            {/* 2026-09-11/12: real bug, confirmed via measurement -- a seat
               sitting close enough to the horizontal midline (small
               |sin(angle)|, see `hasNearHorizontalSeat`'s own comment
               above) lands at roughly the same height as the community
@@ -1068,6 +1087,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               </div>
             </div>
           )}
+          </div>
 
           {actionError && <p className="error-text">{actionError}</p>}
 

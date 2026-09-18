@@ -88,6 +88,26 @@ function App() {
     return () => clearInterval(id);
   }, [identity, refreshBalance]);
 
+  // 2026-09-15: real UX bug -- "Claim a stuck payout" in the footer is
+  // ALWAYS visible whenever logged in (see below), which made it look like
+  // a required manual step after every leave, even though it's a no-op
+  // 99% of the time (nothing pending most leaves succeed normally). Sweep
+  // it automatically once per login instead of requiring a click -- silent
+  // unless it actually finds something, same claimPendingPayout() call the
+  // manual button uses, just fired proactively.
+  useEffect(() => {
+    if (!identity) return;
+    getPikopokerActor(identity)
+      .claimPendingPayout()
+      .then((result) => {
+        if (result.__kind__ === "Ok") {
+          setClaimMessage("Found and claimed a pending payout -- check your balance.");
+          refreshBalance(identity);
+        }
+      })
+      .catch(() => {});
+  }, [identity, refreshBalance]);
+
   async function handleLogin(): Promise<Identity | null> {
     const id = await login();
     setIdentity(id);
