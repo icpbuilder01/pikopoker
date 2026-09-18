@@ -2268,18 +2268,27 @@ section.block > *:last-child {
     display: none;
   }
 
-  /* Chat becomes a small floating toggle pinned to the felt's bottom-
+  /* Chat becomes a small floating toggle pinned near the felt's top-
      right corner instead of a sidebar column -- fixed positioning (not
      nested inside .felt-wrap) so it overlays the page rather than taking
      up table-layout flow space, and never disturbs the felt/action-bar
      sizing this file works hard to keep decoupled from siblings (see
      .felt-wrap's own comment). Opening it shows a compact floating
-     panel above the toggle, closing it goes back to just the icon so it
-     never blocks play once dismissed. */
+     panel below the toggle, closing it goes back to just the icon so it
+     never blocks play once dismissed.
+     2026-09-15: moved from bottom-right to top-right -- the dev flagged
+     bottom-right as sitting too close to the Fold/Check/raise buttons
+     below the felt. 145px clears the table-room-header row (Sound/Rules
+     buttons, measured bottom ~137px) with a little margin; not felt-
+     tracked (this is viewport-fixed, same approach as the old bottom-
+     right version, just a top offset instead of a bottom one) so an
+     unusually tall header (e.g. a private table's invite-QR panel
+     toggled open) could in principle sit close to it -- an edge case,
+     not the common path, and self-resolving (close the QR panel). */
   .table-chat {
     position: fixed;
     right: 12px;
-    bottom: 12px;
+    top: 145px;
     z-index: 40;
     width: auto;
   }
@@ -2287,7 +2296,7 @@ section.block > *:last-child {
   .table-chat-panel {
     position: fixed;
     right: 12px;
-    bottom: 60px;
+    top: 193px;
     width: min(84vw, 300px);
   }
 
