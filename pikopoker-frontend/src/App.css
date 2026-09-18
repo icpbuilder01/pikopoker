@@ -732,6 +732,17 @@ section.block > *:last-child {
   align-items: center;
 }
 
+/* 2026-09-15: wraps the chat toggle, felt, and action bar together so
+   desktop can lay them out as a row (chat | felt | betting panel)
+   without touching .felt-wrap's own width:100%/aspect-ratio sizing --
+   see .felt-wrap's own comment below on why that decoupled sizing is
+   deliberately preserved. Mobile-first default here is just a plain
+   column, identical to the old unwrapped flow. */
+.table-layout {
+  display: flex;
+  flex-direction: column;
+}
+
 .felt-wrap {
   position: relative;
   width: 100%;
@@ -1724,6 +1735,134 @@ section.block > *:last-child {
   color: var(--text-secondary);
 }
 
+/* ---- Per-table chat ---- */
+
+.table-chat {
+  display: flex;
+  flex-direction: column;
+}
+
+.table-chat-toggle {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--surface);
+  border-style: solid;
+  border-width: 2px;
+  border-top-color: var(--bevel-hi);
+  border-left-color: var(--bevel-hi);
+  border-bottom-color: var(--bevel-lo);
+  border-right-color: var(--bevel-lo);
+  box-shadow: 3px 3px 0 var(--hard-shadow);
+  cursor: pointer;
+}
+
+.table-chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border-style: solid;
+  border-width: 2px;
+  border-top-color: var(--bevel-hi);
+  border-left-color: var(--bevel-hi);
+  border-bottom-color: var(--bevel-lo);
+  border-right-color: var(--bevel-lo);
+  box-shadow: 3px 3px 0 var(--hard-shadow);
+  padding: 10px;
+}
+
+.table-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.table-chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
+.table-chat-message.mine .table-chat-sender {
+  color: var(--accent);
+}
+
+.table-chat-sender {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.table-chat-text {
+  color: var(--text);
+}
+
+.table-chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.table-chat-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Desktop: a real sidebar column, collapsible to a slim toggle strip so
+   closing it gives the felt/betting panel the room back rather than
+   leaving dead space. Mobile (see the max-width:640px block below)
+   switches this to a floating overlay instead -- no separate markup,
+   same component, CSS-only per breakpoint. */
+@media (min-width: 641px) {
+  .page.in-table {
+    max-width: 1280px;
+  }
+
+  .table-layout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 320px;
+    align-items: start;
+    gap: 16px;
+  }
+
+  .table-chat {
+    grid-column: 1;
+    width: 40px;
+    overflow: hidden;
+    transition: width 0.15s ease;
+  }
+
+  .table-chat.open {
+    width: 260px;
+    overflow: visible;
+  }
+
+  .felt-wrap {
+    grid-column: 2;
+  }
+
+  .action-bar.modern {
+    grid-column: 3;
+    margin-bottom: 0;
+  }
+
+  .table-chat-panel {
+    width: 260px;
+  }
+
+  .table-chat-messages {
+    max-height: 360px;
+  }
+}
+
 @media (max-width: 640px) {
   .felt-wrap {
     aspect-ratio: 3 / 4;
@@ -1971,17 +2110,31 @@ section.block > *:last-child {
   }
 
   .bet-presets-label {
-    font-size: 0.6rem;
+    font-size: 0.56rem;
   }
 
   .bet-presets {
-    gap: 3px;
+    gap: 2px;
   }
 
+  /* 2026-09-15: shrunk further -- the dev asked specifically for the
+     preset-bets row to take less vertical room on mobile so the whole
+     table + betting UI fits one screen without scrolling. Tighter
+     padding and smaller label/amount text; still >=44px tap target
+     height with the reduced padding, just less air around it. */
   .bet-preset {
-    padding: 4px 6px;
+    padding: 3px 4px;
     min-width: 0;
     flex: 1 1 0;
+    gap: 0;
+  }
+
+  .bet-preset .bet-preset-label {
+    font-size: 0.56rem;
+  }
+
+  .bet-preset .chip-amount {
+    font-size: 0.7rem;
   }
 
   /* The custody/fairness disclosure is useful in the lobby but is pure
@@ -1989,6 +2142,33 @@ section.block > *:last-child {
      info is still one tap away via Rules. */
   .in-table .footer {
     display: none;
+  }
+
+  /* Chat becomes a small floating toggle pinned to the felt's bottom-
+     right corner instead of a sidebar column -- fixed positioning (not
+     nested inside .felt-wrap) so it overlays the page rather than taking
+     up table-layout flow space, and never disturbs the felt/action-bar
+     sizing this file works hard to keep decoupled from siblings (see
+     .felt-wrap's own comment). Opening it shows a compact floating
+     panel above the toggle, closing it goes back to just the icon so it
+     never blocks play once dismissed. */
+  .table-chat {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 40;
+    width: auto;
+  }
+
+  .table-chat-panel {
+    position: fixed;
+    right: 12px;
+    bottom: 60px;
+    width: min(84vw, 300px);
+  }
+
+  .table-chat-messages {
+    max-height: 40vh;
   }
 }
 
