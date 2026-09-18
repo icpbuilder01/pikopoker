@@ -452,30 +452,39 @@ actor self {
     };
   };
 
-  public shared query ({ caller }) func getTableView(tableId : Nat) : async ?Types.TableView {
+  // `code` only matters for a private table -- see canViewTable's own
+  // comment for the real leak this closes. Public tables are unaffected
+  // (pass null), same "watch free, log in to act" posture as ever.
+  public shared query ({ caller }) func getTableView(tableId : Nat, code : ?Text) : async ?Types.TableView {
     switch (Map.get(tables, Nat.compare, tableId)) {
-      case (?t) { ?tableView(t, caller) };
+      case (?t) { if (canViewTable(t, caller, code)) { ?tableView(t, caller) } else { null } };
       case null { null };
     };
   };
 
-  // Public within the table -- not seat-gated (spectators can read/send
-  // too, same "watch without logging in, log in to act" posture as the
-  // rest of this canister), redacts nothing. See freshChatMessages'
-  // comment above for why expiry is lazy rather than timer-driven.
-  public query func getTableChat(tableId : Nat) : async [Types.ChatMessage] {
-    freshChatMessages(tableId);
+  // Spectators can read/send without being seated, same "watch without
+  // logging in, log in to act" posture as the rest of this canister --
+  // redacts nothing beyond the membership/code gate itself. See
+  // freshChatMessages' own comment above for why expiry is lazy rather
+  // than timer-driven, and canViewTable's for why this gate exists at
+  // all now (2026-09-15: was ungated, same leak class as getTableView).
+  public shared query ({ caller }) func getTableChat(tableId : Nat, code : ?Text) : async [Types.ChatMessage] {
+    switch (Map.get(tables, Nat.compare, tableId)) {
+      case (?t) { if (canViewTable(t, caller, code)) { freshChatMessages(tableId) } else { [] } };
+      case null { [] };
+    };
   };
 
-  public shared ({ caller }) func sendTableChat(tableId : Nat, text : Text) : async {
+  public shared ({ caller }) func sendTableChat(tableId : Nat, text : Text, code : ?Text) : async {
     #Ok;
     #Err : Types.ChatError;
   } {
     if (Principal.isAnonymous(caller)) { return #Err(#Anonymous) };
-    switch (Map.get(tables, Nat.compare, tableId)) {
+    let t = switch (Map.get(tables, Nat.compare, tableId)) {
       case null { return #Err(#TableNotFound) };
-      case (?_) {};
+      case (?t) { t };
     };
+    if (not canViewTable(t, caller, code)) { return #Err(#TableNotFound) };
     let trimmed = Text.trim(text, #char ' ');
     if (Text.size(trimmed) == 0) { return #Err(#EmptyMessage) };
     if (Text.size(trimmed) > CHAT_MAX_MESSAGE_LEN) { return #Err(#MessageTooLong) };
@@ -587,6 +596,43 @@ actor self {
   func isSeatedAt(t : Types.Table, p : Principal) : Bool {
     for (s in t.seats.vals()) { if (s.occupant == ?p) { return true } };
     false;
+  };
+
+  func normalizeCode(code : Text) : Text {
+    Text.toLower(Text.trim(code, #predicate(func(c) { c == ' ' })));
+  };
+
+  // 2026-09-15: real vulnerability, found in a full security audit and
+  // fixed the same session -- getTableView/getTableChat/sendTableChat
+  // took only a bare tableId, no membership or code check at all, and
+  // TableView.kind echoes `t.kind` UNCHANGED -- for a private table
+  // that's `#Private({ code })`, so the actual invite code was handed
+  // back in plaintext to literally anyone who queried that table id.
+  // Table ids are small sequential integers (0, 1, 2, ...), trivial to
+  // enumerate with no privilege at all -- so the entire "private, invite-
+  // only" model was bypassable by anyone willing to loop over a few
+  // hundred ids, both for reading a private table's full live state
+  // (board, bets, results, and everyone's hole cards at showdown) and
+  // for lifting its code to actually join and play with real PIKO.
+  // Public tables are unaffected -- this canister's whole design is
+  // "watch free, log in to act", and that's preserved exactly; only a
+  // private table's own privacy boundary was broken. Fixed by gating on
+  // either being seated at the table already, or presenting the correct
+  // code -- same normalization (trim + lowercase) findTableByCode
+  // already uses for joining, so a viewer can paste the code in any
+  // case/with stray whitespace the same way a joiner already could.
+  func canViewTable(t : Types.Table, caller : Principal, code : ?Text) : Bool {
+    switch (t.kind) {
+      case (#Public) { true };
+      case (#Private({ code = realCode })) {
+        isSeatedAt(t, caller) or (
+          switch (code) {
+            case (?c) { normalizeCode(c) == realCode };
+            case null { false };
+          }
+        );
+      };
+    };
   };
 
   func doJoin(t : Types.Table, seatIndex : Nat, caller : Principal) : async* {

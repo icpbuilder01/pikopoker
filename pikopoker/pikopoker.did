@@ -199,8 +199,8 @@ service : {
   getLobby: () -> (vec TableSummary) query;
   getMyPrivateTables: () -> (vec TableSummary) query;
   getRakeBalance: () -> (nat) query;
-  getTableChat: (tableId: nat) -> (vec ChatMessage) query;
-  getTableView: (tableId: nat) -> (opt TableView) query;
+  getTableChat: (tableId: nat, code: opt text) -> (vec ChatMessage) query;
+  getTableView: (tableId: nat, code: opt text) -> (opt TableView) query;
   getTickDiagnostics: () ->
    (record {
       lastTickAt: int;
@@ -228,7 +228,7 @@ service : {
   lockPikoLedgerId: () -> ();
   lockRakeWithdrawals: () -> ();
   proposeRakeWithdrawal: (to: principal, amount: nat) -> ();
-  sendTableChat: (tableId: nat, "text": text) ->
+  sendTableChat: (tableId: nat, "text": text, code: opt text) ->
    (variant {
       Err: ChatError;
       Ok;
