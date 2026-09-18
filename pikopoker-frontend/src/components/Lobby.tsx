@@ -36,6 +36,8 @@ function createErrorMessage(err: CreatePrivateError): string {
       return "Buy-in must be between 100 and 1,000,000 PIKO (or Free).";
     case CreatePrivateError.InvalidName:
       return "Enter a table name (1-32 characters).";
+    case CreatePrivateError.TemporarilyUnavailable:
+      return "Couldn't generate a table code right now -- try again.";
     default:
       return "Couldn't create the table.";
   }

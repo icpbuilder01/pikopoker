@@ -119,6 +119,7 @@ type CreatePrivateError =
    Anonymous;
    InvalidBuyIn;
    InvalidName;
+   TemporarilyUnavailable;
  };
 type ChatMessage = 
  record {
