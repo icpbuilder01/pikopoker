@@ -20,7 +20,7 @@ import {
   type SeatView,
   type TableView,
 } from "../bindings/pikopoker/pikopoker";
-import { isMuted, playCardSound, playChipSound, playFoldSound, playWinSound, setMuted } from "../lib/sound";
+import { isMuted, playDealSound, playFlipSound, playChipSound, playFoldSound, playWinSound, setMuted } from "../lib/sound";
 
 interface TableRoomProps {
   tableId: bigint;
@@ -450,8 +450,12 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
     if (!view) return;
     const prev = prevSoundViewRef.current;
     if (prev) {
-      if (view.handNumber !== prev.handNumber) playCardSound(2);
-      if (view.board.length > prev.board.length) playCardSound(view.board.length - prev.board.length);
+      // 2026-09-15: split -- a new hand is hole cards being DEALT (slide +
+      // soft land, still face-down for everyone but "me"), a growing
+      // board is community cards being FLIPPED face-up (sharp snap). See
+      // sound.ts's own comment on why these are now different cues.
+      if (view.handNumber !== prev.handNumber) playDealSound(2);
+      if (view.board.length > prev.board.length) playFlipSound(view.board.length - prev.board.length);
       const committedNow = view.seats.reduce((sum, s) => sum + s.committedThisRound, 0n);
       const committedBefore = prev.seats.reduce((sum, s) => sum + s.committedThisRound, 0n);
       if (committedNow > committedBefore) playChipSound();
