@@ -219,7 +219,7 @@ function App() {
               <div className="tag-row">
                 <span className="tag">On-chain, no house edge secrets</span>
                 <span className="tag spark">Public &amp; private tables</span>
-                <span className="tag">2-8 player tables</span>
+                <span className="tag">2-6 player tables</span>
               </div>
               <h1>Take a seat.</h1>
               <p>

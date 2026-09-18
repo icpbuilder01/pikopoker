@@ -102,7 +102,10 @@ actor self {
   // rooms do it. Controller-adjustable like mother's miningFeeE8s (moves
   // cost for everyone equally, can't target anyone, low blast radius), no
   // timelock needed for the same reason.
-  var rakeBps : Nat = 200; // 2%
+  // No commission -- the whole PIKO family is subsidized by the mining
+  // auto-top-up system, this site doesn't need to earn anything itself.
+  // Still controller-adjustable (setRakeBps) if that ever changes.
+  var rakeBps : Nat = 0;
   let rakeCapBigBlinds : Nat = 3;
   var rakeBalance : Nat = 0;
   // A table's buyIn of exactly 0 is the sentinel for a play-money table --
@@ -117,6 +120,9 @@ actor self {
   // see its own comment for why this exists instead of a `nextTableId`
   // check.
   var freePlay2And3Seeded : Bool = false;
+  // Guards the one-time "add a 4th free table" migration below, same
+  // reasoning as freePlay2And3Seeded just above.
+  var freePlay4Seeded : Bool = false;
   let tables : Map.Map<Nat, Types.Table> = Map.empty<Nat, Types.Table>();
   let privateCodes : Map.Map<Text, Nat> = Map.empty<Text, Nat>();
   // Locks concurrent join/leave/topUp calls from the same principal --
@@ -419,6 +425,13 @@ actor self {
     createFreeTable("Free Play 2");
     createFreeTable("Free Play 3");
     freePlay2And3Seeded := true;
+  };
+
+  // 2026-09-18: a 4th free table, same reasoning/safety as the pair above
+  // (pure addition, doesn't touch existing tables).
+  if (not freePlay4Seeded) {
+    createFreeTable("Free Play 4");
+    freePlay4Seeded := true;
   };
 
   // ---- Views (hole cards redacted for everyone but the caller, except at showdown) ----
@@ -1879,7 +1892,12 @@ actor self {
   };
 
   func applyRake(t : Types.Table, potAmount : Nat) : Nat {
-    if (rakeBps == 0 or potAmount == 0) { return potAmount };
+    // Free Play's buyIn==0 chips aren't real PIKO -- taking a cut of them
+    // would just be phantom accounting mixed into the same rakeBalance
+    // real-money rake uses, with no real value behind it (found 2026-09-18:
+    // rakeBalance read 773 PIKO while the canister's actual PIKO ledger
+    // balance was only 2.05 -- almost entirely Free Play's fake "rake").
+    if (rakeBps == 0 or potAmount == 0 or t.buyIn == 0) { return potAmount };
     let cap = t.bigBlind * rakeCapBigBlinds;
     var rake = (potAmount * rakeBps) / 10_000;
     if (rake > cap) { rake := cap };

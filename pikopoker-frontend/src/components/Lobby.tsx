@@ -15,7 +15,7 @@ interface LobbyProps {
 const POLL_MS = 5000;
 // Mirrors pikopoker/src/types.mo's Types.MAX_SEATS -- TableSummary doesn't
 // carry a seat count, so this has to be kept in sync by hand.
-const TABLE_SEATS = 8;
+const TABLE_SEATS = 6;
 
 function phaseTag(p: Phase): string {
   switch (p) {
