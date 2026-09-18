@@ -8,6 +8,12 @@ interface TableChatProps {
   tableId: bigint;
   identity: Identity | null;
   myPrincipalText: string | null;
+  // 2026-09-15: the private table's own invite code, so getTableChat/
+  // sendTableChat can prove entitlement to a private table's chat the
+  // same way getTableView now does -- see canViewTable's own comment in
+  // main.mo for the real leak this (and the matching getTableView fix)
+  // closes. undefined/absent for a public table, harmless either way.
+  privateCode?: string;
 }
 
 const CHAT_POLL_MS = 2500;
@@ -23,7 +29,7 @@ const CHAT_MAX_LEN = 240;
 // notice new messages while closed. Compromise: still poll while closed,
 // just much less often (15s vs 2.5s open) -- a real reduction from
 // constant fast polling, just not the original zero.
-export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps) {
+export function TableChat({ tableId, identity, myPrincipalText, privateCode }: TableChatProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
@@ -49,7 +55,7 @@ export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps
     let cancelled = false;
     async function poll() {
       try {
-        const msgs = await getPikopokerActor().getTableChat(tableId);
+        const msgs = await getPikopokerActor().getTableChat(tableId, privateCode ?? null);
         if (cancelled) return;
         setMessages(msgs);
         const latest = msgs.length > 0 ? msgs[msgs.length - 1].timestamp : 0n;
@@ -70,7 +76,7 @@ export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps
       cancelled = true;
       clearInterval(id);
     };
-  }, [open, tableId]);
+  }, [open, tableId, privateCode]);
 
   useEffect(() => {
     if (!listRef.current) return;
@@ -84,12 +90,12 @@ export function TableChat({ tableId, identity, myPrincipalText }: TableChatProps
     setSending(true);
     setError(null);
     try {
-      const result = await getPikopokerActor(identity).sendTableChat(tableId, trimmed);
+      const result = await getPikopokerActor(identity).sendTableChat(tableId, trimmed, privateCode ?? null);
       if (result.__kind__ === "Err") {
         setError("Message not sent -- try again.");
       } else {
         setText("");
-        const msgs = await getPikopokerActor().getTableChat(tableId);
+        const msgs = await getPikopokerActor().getTableChat(tableId, privateCode ?? null);
         setMessages(msgs);
         if (msgs.length > 0) lastSeenTimestampRef.current = msgs[msgs.length - 1].timestamp;
       }

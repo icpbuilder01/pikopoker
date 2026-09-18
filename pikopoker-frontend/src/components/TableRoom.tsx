@@ -340,13 +340,13 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
 
   const refresh = useCallback(async () => {
     try {
-      const v = await getPikopokerActor(identity ?? undefined).getTableView(tableId);
+      const v = await getPikopokerActor(identity ?? undefined).getTableView(tableId, privateCode ?? null);
       setView(v);
       setLoadError(v ? null : "Table not found.");
     } catch (err) {
       console.error("Failed to load table view", err);
     }
-  }, [tableId, identity]);
+  }, [tableId, identity, privateCode]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- polling on-chain state, not derived
@@ -881,7 +881,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
               TableChat switches to a small floating toggle over the
               felt's bottom-right corner instead of a sidebar. */}
           <div className="table-layout">
-            <TableChat tableId={tableId} identity={identity} myPrincipalText={myPrincipalText} />
+            <TableChat tableId={tableId} identity={identity} myPrincipalText={myPrincipalText} privateCode={privateCode} />
             {/* 2026-09-11/12: real bug, confirmed via measurement -- a seat
               sitting close enough to the horizontal midline (small
               |sin(angle)|, see `hasNearHorizontalSeat`'s own comment
