@@ -3,7 +3,24 @@
   margin: 0 auto;
   padding: 32px 20px 96px;
   position: relative;
-  overflow-x: hidden;
+  /* 2026-09-15: was `overflow-x: hidden` -- real bug, found while adding
+     the mobile chat toggle's `position: sticky` (see .table-chat's own
+     comment). Per the CSS overflow spec, `overflow-x: hidden` paired with
+     the default `overflow-y: visible` computes overflow-y to `auto`
+     (declaring it explicitly as `visible` doesn't prevent this, the
+     coercion happens regardless of what's written) -- which makes .page
+     a scroll container as far as the browser's concerned even though it
+     never actually shows its own scrollbar (it just grows to fit its
+     content, so document-level/viewport scrolling handles it in
+     practice). That's enough to break every `position: sticky`
+     descendant, since sticky's "stick until you'd leave your containing
+     block" math gets computed against the wrong scrollport. `clip`
+     blocks horizontal overflow the same way `hidden` did, without
+     establishing a scroll container or triggering the sibling-axis
+     coercion -- confirmed via computed style (.page's overflow-y read
+     back as `auto` with `hidden` here, `visible` with `clip`) before
+     shipping, not assumed from the spec text alone. */
+  overflow-x: clip;
 }
 
 /* ---- Header ---- */
@@ -1961,6 +1978,15 @@ section.block > *:last-child {
   .table-chat.open {
     width: 260px;
     overflow: visible;
+    /* 2026-09-15: the dev asked for the open panel to reach down to the
+       footer bar, same grounding the action-bar already got. Only on
+       `.open` (not the closed 40px toggle, which would otherwise stretch
+       into a tall empty strip) -- stretches this column's own box to the
+       felt's row height (table-layout's align-items: start governs the
+       OTHER two columns, same pattern as action-bar's own align-self),
+       then .table-chat-panel/.table-chat-messages below flex to fill it
+       instead of stopping at their own fixed content height. */
+    align-self: stretch;
   }
 
   .felt-wrap {
@@ -2043,10 +2069,13 @@ section.block > *:last-child {
 
   .table-chat-panel {
     width: 260px;
+    flex: 1;
+    min-height: 0;
   }
 
   .table-chat-messages {
-    max-height: 360px;
+    flex: 1;
+    max-height: none;
   }
 }
 
@@ -2331,35 +2360,41 @@ section.block > *:last-child {
     display: none;
   }
 
-  /* Chat becomes a small floating toggle pinned near the felt's top-
-     right corner instead of a sidebar column -- fixed positioning (not
-     nested inside .felt-wrap) so it overlays the page rather than taking
-     up table-layout flow space, and never disturbs the felt/action-bar
-     sizing this file works hard to keep decoupled from siblings (see
-     .felt-wrap's own comment). Opening it shows a compact floating
-     panel below the toggle, closing it goes back to just the icon so it
-     never blocks play once dismissed.
-     2026-09-15: moved from bottom-right to top-right -- the dev flagged
-     bottom-right as sitting too close to the Fold/Check/raise buttons
-     below the felt. 145px clears the table-room-header row (Sound/Rules
-     buttons, measured bottom ~137px) with a little margin; not felt-
-     tracked (this is viewport-fixed, same approach as the old bottom-
-     right version, just a top offset instead of a bottom one) so an
-     unusually tall header (e.g. a private table's invite-QR panel
-     toggled open) could in principle sit close to it -- an edge case,
-     not the common path, and self-resolving (close the QR panel). */
+  /* Chat is a small toggle that starts right below the table-room-header
+     row (Sound/Rules) -- it's simply the first child of .table-layout in
+     the DOM (see TableRoom.tsx), so on mobile (.table-layout is a plain
+     flex column here) it naturally renders there with zero positioning
+     needed; align-self pins it to the right edge of that row instead of
+     stretching full-width. Opening it shows a compact panel below the
+     toggle (position: absolute relative to it, not the viewport -- see
+     .table-chat-panel below), closing it goes back to just the icon so
+     it never blocks play once dismissed.
+     2026-09-15: was `position: fixed` (viewport-anchored) before, both
+     bottom-right then top-right -- the dev: the icon visibly drifted
+     while scrolling. Real cause: mobile Chrome's address bar hides on
+     scroll, which resizes the CSS viewport `position: fixed` is anchored
+     to mid-scroll, so a fixed element doesn't track 1:1 with content the
+     way it does on desktop (the exact "URL bar problem" this project
+     already hit once before, see App.css's own --app-height/
+     visualViewport history). `position: sticky` sidesteps it entirely --
+     it's computed from real in-flow layout, not a cached viewport rect,
+     so it doesn't jump when the browser chrome animates. Sits at its
+     natural flow position (below Rules) until scrolling would carry it
+     off past `top`, then holds there instead of continuing to scroll
+     away -- reads as "doesn't move" either way, exactly what was asked. */
   .table-chat {
-    position: fixed;
-    right: 12px;
-    top: 145px;
+    position: sticky;
+    top: 8px;
+    align-self: flex-end;
     z-index: 40;
     width: auto;
   }
 
   .table-chat-panel {
-    position: fixed;
-    right: 12px;
-    top: 193px;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
     width: min(84vw, 300px);
   }
 
