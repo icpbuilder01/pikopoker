@@ -1924,10 +1924,17 @@ section.block > *:last-child {
     margin-bottom: 0;
     /* 2026-09-15: went through space-between (spread content across a
        stretched full-height box, too loose a gap) before landing here --
-       now the panel just sizes to its own content (table-layout's
-       align-items: start above), no forced empty space anywhere in it.
-       Padding/font sizes stay bumped from the earlier "make it bigger"
-       pass, that part read correctly. */
+       the panel sizes to its own content (table-layout's align-items:
+       start governs the OTHER two columns), no forced empty space
+       anywhere inside it. Padding/font sizes stay bumped from the
+       earlier "make it bigger" pass, that part read correctly.
+       align-self: end anchors this column's own leftover height (felt
+       is taller than the panel) to the BOTTOM instead of the top, so the
+       panel's own bottom edge lines up with the felt's bottom edge /
+       the footer bar below, matching the table's own grounding instead
+       of floating up near the header -- same content, same size, just
+       repositioned within its column. */
+    align-self: end;
     padding: 22px 24px;
     gap: 16px;
   }
