@@ -919,6 +919,25 @@ section.block > *:last-child {
   background: rgba(0, 0, 0, 0.4);
   padding: 5px 12px;
   border-radius: 10px;
+  /* 2026-09-15: real bug, reported live on mobile -- unlike .felt-pots
+     (short, fixed-format amounts, forced to one line via nowrap just
+     above), a showdown/split-pot result string is genuinely variable-
+     length and can run long ("You & <principal> split main pot..."). On
+     mobile specifically felt-center is only min(46%, 150px) wide (see
+     the mobile override below) -- wrapping at that width took 3+ lines
+     for a real split-pot message, growing felt-center tall enough to
+     collide with the viewer's own hole cards right below it. Capped to
+     2 lines with an ellipsis instead of wrapping indefinitely -- bounds
+     the height growth regardless of message length, same "harmless
+     overflow past felt-center's own declared width" pattern .felt-pots
+     already relies on (felt-center doesn't clip its children), just
+     with a hard line cap instead of a hard nowrap. */
+  max-width: 260px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* A felt this narrow only happens when the flex no-scroll layout had very
@@ -982,6 +1001,7 @@ section.block > *:last-child {
   .felt-result {
     font-size: 0.64rem;
     padding: 3px 8px;
+    max-width: 220px;
   }
 
   /* Opponent seats aren't always at the felt's extreme top/bottom (e.g.
@@ -1883,17 +1903,16 @@ section.block > *:last-child {
   .action-bar.modern {
     grid-column: 3;
     margin-bottom: 0;
-    /* Stretches to match the felt's height (see .table-layout's
-       align-items: stretch above) instead of sizing to its own content
-       and leaving dead space below -- space-between spreads the two
-       content groups (seat/stack row, betting controls) across that
-       full height instead of clumping at the top. Padding/gaps/font
-       sizes bumped a step too, matching "make the panel itself bigger"
-       -- separate from the stretch, which alone would've just meant more
-       *empty* space, not a genuinely bigger-reading panel. */
+    /* 2026-09-15: space-between (tried first) spread the seat/stack row
+       and the betting controls across the felt's FULL stretched height --
+       the dev flagged the resulting gap between "Sit out/Leave" and
+       "Pot/To call" as too loose. Back to a normal small gap so those two
+       groups sit close together like before; any leftover height (from
+       align-items: stretch above) just falls below the betting controls
+       now instead of splitting the groups apart. Padding/font sizes stay
+       bumped, that part read correctly as "bigger". */
     padding: 22px 24px;
-    gap: 20px;
-    justify-content: space-between;
+    gap: 16px;
   }
 
   .action-bar-seat-row {

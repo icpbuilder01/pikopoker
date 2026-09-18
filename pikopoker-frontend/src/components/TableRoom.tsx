@@ -136,14 +136,21 @@ function phaseLabel(p: Phase): string {
 
 // The backend's lastResult is just "Won uncontested"/"Showdown complete" --
 // no winner or hand, since it's meant as a human-facing status string, not
-// structured data. Hole cards ARE revealed to every viewer once phase is
-// Showdown though (backend redacts by phase, not by outcome -- see
-// seatView's revealCards in main.mo), including for an uncontested win, so
-// there's enough here to work out who actually won and show it, purely
-// client-side. Reused from a single seat's card comparison hook already
-// used for the "what do I have" indicator, but with the full kicker-aware
-// scorer (see handEval.ts's own comment) since this needs to agree with
-// how the backend really settles the pot, not just label a category.
+// structured data. Hole cards are only revealed to every viewer for a
+// genuine multi-way Showdown (backend gates on isRealShowdown(t.id), not
+// just phase -- see seatView's revealCards in main.mo, fixed 2026-09-15);
+// an uncontested win reveals nobody's cards but the winner's own, same as
+// a real table where an uncontested winner is never required to show. So
+// for an uncontested win this just falls through to view.lastResult below
+// (contestants.length === 0, since nobody but the winner has any
+// holeCards to look at) -- except from the winner's OWN client, where
+// their own cards are still visible to themselves and this still builds a
+// "You won uncontested with X" line, which is fine: showing your own
+// result to yourself isn't the leak this was fixed for. Reused from a
+// single seat's card comparison hook already used for the "what do I
+// have" indicator, but with the full kicker-aware scorer (see
+// handEval.ts's own comment) since this needs to agree with how the
+// backend really settles the pot, not just label a category.
 function showdownSummary(view: TableView, myPrincipalText: string | null): string | null {
   if (view.phase !== Phase.Showdown) return null;
   const contestants = view.seats.filter((s) => s.inHand && !s.hasFolded && s.holeCards);
