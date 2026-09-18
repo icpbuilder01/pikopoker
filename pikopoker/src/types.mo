@@ -178,7 +178,7 @@ module {
     #IllegalAction : Text;
   };
 
-  public type CreatePrivateError = { #Anonymous; #InvalidBuyIn; #InvalidName };
+  public type CreatePrivateError = { #Anonymous; #InvalidBuyIn; #InvalidName; #TemporarilyUnavailable };
 
   // ---- Per-table chat ----
 

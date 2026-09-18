@@ -568,10 +568,29 @@ actor self {
     if (buyIn != 0 and (buyIn < 10_000_000_000 or buyIn > 100_000_000_000_000)) {
       return #Err(#InvalidBuyIn); // 100 PIKO .. 1,000,000 PIKO
     };
+    // 2026-09-15: real vulnerability, found in a full security audit --
+    // this used to seed the code from `id * 7919 + Time.now() % 1_000_000`,
+    // NOT real randomness (unlike the deck shuffle below, which already
+    // uses raw_rand correctly). `id` is a small sequential counter and the
+    // time component was collapsed to at most 1,000,000 residues by the
+    // modulo, so the actual reachable code space was tiny compared to the
+    // nominal 32^6 alphabet -- guessable in practice by anyone narrowing
+    // down roughly when a table was created. Fetched BEFORE any state
+    // mutation, same reasoning as dealNextHand's own raw_rand call: this
+    // is the only await in the function, so nothing below it needs a
+    // post-await re-check (id/code assignment all happens synchronously
+    // afterward, in one atomic step no other call's continuation can
+    // interleave into).
+    let Management : Types.ManagementActor = actor ("aaaaa-aa");
+    let entropy = try { await Management.raw_rand() } catch (e) {
+      Debug.print("createPrivateTable: raw_rand failed, caller=" # Principal.toText(caller) # " error=" # Error.message(e));
+      return #Err(#TemporarilyUnavailable);
+    };
     let id = nextTableId;
     nextTableId += 1;
-    var code = randomCode(id * 7919 + Int.abs(Time.now()) % 1_000_000);
-    // Vanishingly unlikely, but don't hand out a colliding code.
+    var code = randomCode(Cards.entropyToNat(Blob.toArray(entropy)));
+    // Vanishingly unlikely with real 256-bit entropy, but don't hand out a
+    // colliding code regardless.
     while (Map.get(privateCodes, Text.compare, code) != null) {
       code #= "x";
     };
@@ -1419,7 +1438,32 @@ actor self {
   // phase IS WaitingForPlayers, so without this, a frozen backend timer
   // during Showdown had no recovery route at all. Both steps share this
   // one client-proven-reliable call.
+  // 2026-09-15: real vulnerability, found in a full security audit --
+  // this has no caller check (by design, see the comment above) AND no
+  // rate limit at all, so anyone could call it in a tight loop, for
+  // free, forcing this canister to keep paying real cycles for the full
+  // per-table sweep every single time -- a ready-made amplifier for the
+  // exact cycles-exhaustion incidents this whole file already has a long
+  // history of. Throttled to at most once per table per second --
+  // TRIGGER_DEAL_MIN_INTERVAL_NANOS matches the backend timer's own
+  // TICK_INTERVAL_SECONDS cadence, so every LEGITIMATE caller (the
+  // timer itself, every seated client's ~3s per-table nudge, a fresh
+  // join's own nudgeDeal) is already calling slower than this and is
+  // never throttled -- only calls faster than any real usage pattern
+  // would ever produce get skipped. A throttled call skipping this
+  // table's sweep for up to ~1s is exactly the same "another nudge
+  // catches it shortly after" tolerance this file already relies on
+  // everywhere else (nudgeDeal, the global tickWork() nudge, etc.), not
+  // a new risk.
+  let lastTriggerDealAt : Map.Map<Nat, Int> = Map.empty<Nat, Int>();
+  let TRIGGER_DEAL_MIN_INTERVAL_NANOS : Int = 1 * 1_000_000_000;
+
   public shared func triggerDeal(tableId : Nat) : async () {
+    switch (Map.get(lastTriggerDealAt, Nat.compare, tableId)) {
+      case (?at) { if (Time.now() - at < TRIGGER_DEAL_MIN_INTERVAL_NANOS) { return } };
+      case null {};
+    };
+    Map.add(lastTriggerDealAt, Nat.compare, tableId, Time.now());
     switch (Map.get(tables, Nat.compare, tableId)) {
       case (?t) {
         await* maybeCleanupShowdown(t);
@@ -2012,6 +2056,22 @@ actor self {
   // -- a client (or anyone) calling this directly just runs the same safe,
   // idempotent sweep a moment early, no different in kind from the
   // timer's own call.
+  // 2026-09-15: real vulnerability, found in a full security audit --
+  // `tickRunning` alone only stops CONCURRENT overlap, not rapid
+  // SEQUENTIAL spam (call, get the reply, call again immediately) --
+  // and this is public with no caller check by design (same reasoning
+  // as triggerDeal above), sweeping EVERY table each time. Anyone could
+  // call it in a tight loop, for free, and force the canister to keep
+  // paying for that full sweep at whatever rate they chose -- a bigger
+  // version of the same amplification risk triggerDeal had, worse here
+  // since one call costs O(table count) instead of O(1). Throttled to
+  // once per TICKWORK_MIN_INTERVAL_NANOS, matching TICK_INTERVAL_SECONDS
+  // exactly -- the backend timer's own legitimate calls, and the
+  // frontend's slower 5s global nudge, are never throttled; only calls
+  // faster than the timer's own natural cadence are.
+  transient var lastTickWorkAt : Int = 0;
+  let TICKWORK_MIN_INTERVAL_NANOS : Int = 1 * 1_000_000_000;
+
   public shared func tickWork() : async () {
     // Skips a redundant concurrent sweep if the previous one is still
     // running (see `tickRunning`'s own comment) -- guards against two
@@ -2019,6 +2079,8 @@ actor self {
     // TICK_INTERVAL_SECONDS, on top of (not instead of) dealNextHand's
     // own per-table `dealingTables` lock.
     if (tickRunning) { return };
+    if (Time.now() - lastTickWorkAt < TICKWORK_MIN_INTERVAL_NANOS) { return };
+    lastTickWorkAt := Time.now();
     tickRunning := true;
     try {
       await* tick();
@@ -2119,6 +2181,26 @@ actor self {
     pendingRakeWithdrawal := null;
   };
 
+  // No caller check is intentional (see canViewTable/triggerDeal's own
+  // comments for the pattern this project uses elsewhere) -- the
+  // destination and amount are already fixed by proposeRakeWithdrawal,
+  // controller-only and 48h-timelocked, so anyone executing this just
+  // triggers the already-decided transfer; there's no way to redirect it.
+  //
+  // 2026-09-15: real gap, found in a full security audit -- unlike every
+  // player-facing payout in this file (refundOrQueue/claimPendingPayout),
+  // a failed transfer here had no recovery path. rakeBalance was already
+  // decremented and the pending withdrawal cleared BEFORE the ledger
+  // call; if it rejected outright the whole call would trap and the IC's
+  // own message atomicity would roll all of that back for free -- but if
+  // the ledger replied normally with a business #Err (not a hard reject),
+  // this function completed normally too, silently losing that amount
+  // from rakeBalance's own books forever even though the PIKO itself
+  // never left the canister. Fixed by reusing the exact same
+  // pendingPayouts/claimPendingPayout safety net every other payout in
+  // this file already relies on, instead of inventing a separate one --
+  // a failed withdrawal now just becomes a normal claimable pendingPayout
+  // for `to`, retryable the same way a player retries a stuck cash-out.
   public shared ({ caller = _ }) func executeRakeWithdrawal() : async Types.TransferResult {
     switch (pendingRakeWithdrawal) {
       case null { Runtime.trap("no pending rake withdrawal") };
@@ -2128,14 +2210,27 @@ actor self {
         pendingRakeWithdrawal := null;
         rakeBalance -= p.amount;
         let Ledger = ledger();
-        await Ledger.icrc1_transfer({
-          from_subaccount = null;
-          to = { owner = p.to; subaccount = null };
-          amount = p.amount;
-          fee = null;
-          memo = null;
-          created_at_time = null;
-        });
+        let result = try {
+          await Ledger.icrc1_transfer({
+            from_subaccount = null;
+            to = { owner = p.to; subaccount = null };
+            amount = p.amount;
+            fee = null;
+            memo = null;
+            created_at_time = null;
+          });
+        } catch (_e) { #Err(#TemporarilyUnavailable) };
+        switch (result) {
+          case (#Ok(_)) {};
+          case (#Err(_)) {
+            let current = switch (Map.get(pendingPayouts, Principal.compare, p.to)) {
+              case (?n) { n };
+              case null { 0 };
+            };
+            Map.add(pendingPayouts, Principal.compare, p.to, current + p.amount);
+          };
+        };
+        result;
       };
     };
   };
