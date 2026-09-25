@@ -1578,7 +1578,19 @@ actor self {
 
   public shared func triggerDeal(tableId : Nat) : async () {
     switch (Map.get(lastTriggerDealAt, Nat.compare, tableId)) {
-      case (?at) { if (Time.now() - at < TRIGGER_DEAL_MIN_INTERVAL_NANOS) { return } };
+      case (?at) {
+        if (Time.now() - at < TRIGGER_DEAL_MIN_INTERVAL_NANOS) {
+          // Throttled, but still make sure a sweep is coming: e.g. a second
+          // player joining within a second of the first lands here, and
+          // without this the deal would wait for the next scheduled wake
+          // (up to MAX_WAKE_GAP_NANOS) instead of ~1s.
+          switch (Map.get(tables, Nat.compare, tableId)) {
+            case (?t) { wakeForTable<system>(t) };
+            case null {};
+          };
+          return;
+        };
+      };
       case null {};
     };
     Map.add(lastTriggerDealAt, Nat.compare, tableId, Time.now());
@@ -1589,6 +1601,8 @@ actor self {
         await* maybeCleanupIdleSeats(t);
         await* maybeCleanupSittingOutSeats(t);
         await* maybeEnforceActionTimeout(t);
+        // A deal here (e.g. right after a join) sets the first actionDeadline.
+        wakeForTable<system>(t);
       };
       case null {};
     };
@@ -1684,6 +1698,7 @@ actor self {
     resetAfkTimeouts(tableId, seatIndex);
     t.seats[seatIndex].hasFolded := true;
     advanceAfterAction(t, seatIndex);
+    wakeForTable<system>(t);
     #Ok;
   };
 
@@ -1698,6 +1713,7 @@ actor self {
     s.committedThisRound += paid;
     s.committedThisHand += paid;
     advanceAfterAction(t, seatIndex);
+    wakeForTable<system>(t);
     #Ok;
   };
 
@@ -1752,6 +1768,7 @@ actor self {
       t.toAct -= 1;
     };
     finishActionAdvance(t, seatIndex);
+    wakeForTable<system>(t);
     #Ok;
   };
 
@@ -2156,14 +2173,50 @@ actor self {
   // eventual reply/reject still gets processed on its own regardless of
   // nothing having awaited the outer future, and a reject now actually
   // gets logged instead of vanishing.
+  // Unused since 2026-09-25 (see armWake below), kept declared on purpose:
+  // it's a persisted top-level var, and removing/retyping one traps the
+  // upgrade with "Memory-incompatible program upgrade".
   var timerId : ?Timer.TimerId = null;
-  func startTicker<system>() {
+
+  // 2026-09-25: event-driven wake-ups instead of a fixed 1-second ticker.
+  // Measured on a local replica with every table empty: the 1s ticker cost
+  // ~5.2T cycles/day (~60M per tick, almost all per-message fees for the
+  // timer, Motoko's timer self-call and the tickWork self-call -- the
+  // sweep's own logic and logging were negligible), vs ~0.54T/day at 10s.
+  // Now one timer is armed for the earliest moment the sweep actually has
+  // something to do (nextWakeAt below), and none at all while every table
+  // is empty. Same trap-isolation shape as the old ticker: the timer
+  // closure only does timer bookkeeping (including a MAX_WAKE_GAP_NANOS
+  // fallback re-arm, so a trapping sweep can't kill the schedule) and
+  // fires tickWork() as an un-awaited self-call; tickWork() then re-arms
+  // precisely from the post-sweep state.
+  transient var wakeTimer : ?Timer.TimerId = null;
+  transient var wakeAt : Int = 0;
+  transient var lastWakeFireAt : Int = 0;
+  // Floor between two timer-driven sweeps -- matches the old ticker's
+  // cadence, so the worst case (e.g. a deal whose raw_rand keeps failing
+  // and is retried on every sweep) costs no more than before.
+  transient let MIN_WAKE_GAP_NANOS : Int = 1_000_000_000;
+  // Ceiling while any table is in use: a safety net for any state the
+  // deadline computation below doesn't anticipate (and the first-sweep
+  // initialisation of sittingOutSince/soloIdleSince after a sit-out or a
+  // lone player, which the sweep itself records lazily).
+  transient let MAX_WAKE_GAP_NANOS : Int = 60_000_000_000;
+
+  func armWake<system>(at : Int) {
+    switch (wakeTimer) { case (?id) { Timer.cancelTimer(id) }; case null {} };
+    let earliest = lastWakeFireAt + MIN_WAKE_GAP_NANOS;
+    let target = if (at < earliest) { earliest } else { at };
+    let delay = target - Time.now();
+    wakeAt := target;
     timerArmCount += 1;
-    timerId := ?Timer.setTimer<system>(
-      #seconds TICK_INTERVAL_SECONDS,
+    wakeTimer := ?Timer.setTimer<system>(
+      #nanoseconds(if (delay > 0) { Int.abs(delay) } else { 0 }),
       func() : async () {
+        wakeTimer := null;
         timerFireCount += 1;
-        startTicker<system>();
+        lastWakeFireAt := Time.now();
+        armWake<system>(Time.now() + MAX_WAKE_GAP_NANOS);
         ignore (
           async {
             try {
@@ -2176,7 +2229,100 @@ actor self {
       },
     );
   };
-  startTicker<system>();
+
+  // Moves the wake-up earlier if `at` comes before the one already armed;
+  // never pushes it later.
+  func wakeNoLaterThan<system>(at : Int) {
+    switch (wakeTimer) {
+      case (?_) { if (wakeAt <= at) { return } };
+      case null {};
+    };
+    armWake<system>(at);
+  };
+
+  // When the sweep next has work on this table, mirroring what tick()'s
+  // per-table branches check: sit-out expiry, dealing / solo-idle cleanup
+  // while waiting, showdown cleanup, action timeout. `null` = nothing
+  // pending on this table.
+  func tableWakeAt(t : Types.Table) : ?Int {
+    let now = Time.now();
+    var best : ?Int = null;
+    func consider(at : Int) {
+      best := switch (best) { case (?b) { ?Int.min(b, at) }; case null { ?at } };
+    };
+    var occupied = 0;
+    var i = 0;
+    while (i < t.seats.size()) {
+      let s = t.seats[i];
+      if (s.occupant != null) { occupied += 1 };
+      if (s.occupant != null and s.sittingOut and not s.inHand) {
+        switch (Map.get(sittingOutSince, Text.compare, afkKey(t.id, i))) {
+          case (?since) { consider(since + SIT_OUT_TIMEOUT_NANOS) };
+          case null { consider(now) };
+        };
+      };
+      i += 1;
+    };
+    switch (t.phase) {
+      case (#WaitingForPlayers) {
+        if (seatedActiveIndices(t).size() >= 2) {
+          consider(switch (t.nextHandAt) { case (?at) { at }; case null { now } });
+        } else if (occupied > 0) {
+          switch (Map.get(soloIdleSince, Nat.compare, t.id)) {
+            case (?since) { consider(since + SOLO_IDLE_TIMEOUT_NANOS) };
+            case null { consider(now) };
+          };
+        };
+      };
+      case (#Showdown) {
+        consider(switch (t.nextHandAt) { case (?at) { at }; case null { now + MAX_WAKE_GAP_NANOS } });
+      };
+      case (_) {
+        consider(switch (t.actionDeadline) { case (?d) { d }; case null { now + MAX_WAKE_GAP_NANOS } });
+      };
+    };
+    if (occupied > 0 or t.phase != #WaitingForPlayers) {
+      consider(now + MAX_WAKE_GAP_NANOS);
+    };
+    best;
+  };
+
+  func nextWakeAt() : ?Int {
+    var best : ?Int = null;
+    for ((_, t) in Map.entries(tables)) {
+      switch (tableWakeAt(t)) {
+        case (?at) { best := switch (best) { case (?b) { ?Int.min(b, at) }; case null { ?at } } };
+        case null {};
+      };
+    };
+    best;
+  };
+
+  // Re-arms from scratch after a sweep: the earliest pending deadline, or
+  // no timer at all when nothing is pending anywhere.
+  func rescheduleWake<system>() {
+    switch (nextWakeAt()) {
+      case (?at) { armWake<system>(at) };
+      case null {
+        switch (wakeTimer) { case (?id) { Timer.cancelTimer(id) }; case null {} };
+        wakeTimer := null;
+      };
+    };
+  };
+
+  // Called after anything that can create an earlier deadline than the
+  // armed one (an action moving the hand on, a deal) -- sweeps are only
+  // scheduled, never run, from here.
+  func wakeForTable<system>(t : Types.Table) {
+    switch (tableWakeAt(t)) {
+      case (?at) { wakeNoLaterThan<system>(at) };
+      case null {};
+    };
+  };
+
+  // First sweep after every install/upgrade (timers don't survive an
+  // upgrade); it then schedules itself from the real state.
+  armWake<system>(Time.now());
 
   // The actual per-table sweep, as a genuine public method so
   // `startTicker`'s closure above can fire it via a real self-call
@@ -2222,6 +2368,7 @@ actor self {
       Debug.print("tick(): rejected, skipping this tick -- " # Error.message(e));
     };
     tickRunning := false;
+    rescheduleWake<system>();
   };
 
   // Re-exposed 2026-09-09 (see the stable-var comment above) specifically

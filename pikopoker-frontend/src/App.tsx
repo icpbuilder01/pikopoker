@@ -61,10 +61,16 @@ function App() {
   // given visitor happens to be looking at). Mirrors the same "cheap,
   // safe to call even when there's nothing to do" reasoning already
   // established for `TableRoom.tsx`'s own per-table `triggerDeal` nudge.
+  //
+  // 2026-09-25: slowed from 5s to 30s. The backend now schedules its own
+  // wake-ups (armWake in pikopoker/src/main.mo), and every call here is a
+  // paid update (~10M cycles, measured) -- at 5s that was ~0.17T
+  // cycles/day per open tab. TableRoom's overdue-deadline nudge covers a
+  // stuck table within seconds; this stays as a slower global net.
   useEffect(() => {
     const id = setInterval(() => {
       getPikopokerActor().tickWork().catch(() => {});
-    }, 5000);
+    }, 30000);
     return () => clearInterval(id);
   }, []);
 
