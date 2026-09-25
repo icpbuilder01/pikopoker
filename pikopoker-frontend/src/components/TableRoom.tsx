@@ -394,7 +394,18 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
   // actually calling it during Showdown too. Same reasoning as before --
   // nudging can't hurt on a table that's fine, and closes off the one
   // remaining "stuck with no client-side recovery at all" gap.
-  const nudgeStateRef = useRef<{ active: boolean; identity: Identity | null }>({ active: false, identity: null });
+  //
+  // 2026-09-25: the backend now wakes itself exactly when a table has
+  // something due (see armWake in pikopoker/src/main.mo), so this nudge is
+  // only a safety net -- slowed from 3s to 10s (each call is a paid update,
+  // ~10M cycles). Added alongside it: nudge as soon as the acting player's
+  // deadline is >3s overdue, which is exactly what a stuck backend timer
+  // looks like from here; costs nothing while the backend is healthy.
+  const nudgeStateRef = useRef<{ active: boolean; overdue: boolean; identity: Identity | null }>({
+    active: false,
+    overdue: false,
+    identity: null,
+  });
   useEffect(() => {
     const active = !!(
       identity &&
@@ -403,18 +414,22 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       (view.phase === Phase.WaitingForPlayers || view.phase === Phase.Showdown) &&
       view.seats.some((s) => s.occupant?.toText() === myPrincipalText && !s.sittingOut)
     );
-    nudgeStateRef.current = { active, identity };
-  }, [identity, view, myPrincipalText]);
+    const overdue = !!(view && view.actionDeadline !== undefined && now > Number(view.actionDeadline / 1_000_000n) + 3000);
+    nudgeStateRef.current = { active, overdue, identity };
+  }, [identity, view, myPrincipalText, now]);
 
   useEffect(() => {
+    let lastNudge = 0;
     const id = setInterval(() => {
-      const { active, identity: nudgeIdentity } = nudgeStateRef.current;
-      if (active && nudgeIdentity) {
-        getPikopokerActor(nudgeIdentity)
+      const { active, overdue, identity: nudgeIdentity } = nudgeStateRef.current;
+      const since = Date.now() - lastNudge;
+      if ((overdue && since >= 3000) || (active && nudgeIdentity && since >= 10000)) {
+        lastNudge = Date.now();
+        getPikopokerActor(nudgeIdentity ?? undefined)
           .triggerDeal(tableId)
           .catch(() => {});
       }
-    }, 3000);
+    }, 1000);
     return () => clearInterval(id);
   }, [tableId]);
 
