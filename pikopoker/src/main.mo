@@ -595,7 +595,9 @@ actor self {
     var n = seed;
     var out = "";
     var i = 0;
-    while (i < 6) {
+    // 10 chars (was 6): getTableView is a free query that accepts a code
+    // guess, and 31^6 (~887M) was within reach of a patient brute force.
+    while (i < 10) {
       let idx = n % chars.size();
       n := n / chars.size();
       out #= Text.fromChar(chars[idx]);
@@ -748,10 +750,12 @@ actor self {
         // Re-check the seat is still free -- the transfer's await gave up
         // the synchronous prefix's exclusivity, another join for the same
         // seat could have landed while this one was in flight.
-        if (seat.occupant != null) {
-          // Refund: the seat filled while we were waiting on the transfer.
-          await refundOrQueue(caller, t.buyIn);
-          return #Err(#SeatTaken);
+        if (seat.occupant != null or isSeatedAt(t, caller)) {
+          // Refund: the seat filled while we were waiting on the transfer,
+          // or (only possible once the pendingFunds lock has expired) this
+          // same caller got seated elsewhere at this table meanwhile.
+          await refundNet(caller, t.buyIn);
+          return #Err(if (seat.occupant != null) { #SeatTaken } else { #AlreadySeatedAtTable });
         };
         seat.occupant := ?caller;
         seat.stack := t.buyIn;
@@ -783,6 +787,14 @@ actor self {
         Map.add(pendingPayouts, Principal.compare, to, current + amount);
       };
     };
+  };
+
+  // Refunds PIKO this canister just received, minus the ledger fee the
+  // refund itself costs -- 2026-10-03 audit: refunding the full amount
+  // made the canister pay that fee out of other players' escrow.
+  func refundNet(to : Principal, amount : Nat) : async () {
+    let fee = try { await ledger().icrc1_fee() } catch (_e) { 10_000 };
+    if (amount > fee) { await refundOrQueue(to, amount - fee) };
   };
 
   public shared ({ caller }) func joinPublicTable(tableId : Nat, seatIndex : Nat) : async {
@@ -919,6 +931,11 @@ actor self {
       seat.occupant := null;
       seat.stack := 0;
       seat.sittingOut := false;
+      // 2026-10-03 audit: a folded seat can be vacated mid-hand, and
+      // seatView always shows a seat's cards to its occupant -- so whoever
+      // sat down next in this seat during the same hand saw the previous
+      // player's mucked cards. Folded cards are never evaluated, safe to drop.
+      seat.holeCards := null;
       resetAfkTimeouts(t.id, seatIndex);
       resetSittingOutSince(t.id, seatIndex);
       return #Ok(0);
@@ -931,6 +948,7 @@ actor self {
     seat.occupant := null;
     seat.stack := 0;
     seat.sittingOut := false;
+    seat.holeCards := null; // see the Free Play branch above
     resetAfkTimeouts(t.id, seatIndex);
     resetSittingOutSince(t.id, seatIndex);
 
@@ -995,11 +1013,24 @@ actor self {
         created_at_time = null;
       });
     } catch (_e) { #Err(#TemporarilyUnavailable) };
-    clearPendingFunds(caller);
-    switch (result) {
-      case (#Ok(_)) { t.seats[seatIndex].stack += amount; #Ok(()) };
+    let outcome = switch (result) {
+      case (#Ok(_)) {
+        // 2026-10-03 audit: seatIndex was looked up before the await. If the
+        // ledger call outlived the pendingFunds lock (120s), the seat could
+        // have been vacated -- and even re-taken by someone else -- before
+        // this resumed, crediting the wrong stack or an empty seat.
+        if (t.seats[seatIndex].occupant == ?caller) {
+          t.seats[seatIndex].stack += amount;
+          #Ok(());
+        } else {
+          await refundNet(caller, amount);
+          #Err(#SeatOutOfRange);
+        };
+      };
       case (#Err(e)) { #Err(#TransferFailed(e)) };
     };
+    clearPendingFunds(caller);
+    outcome;
   };
 
   // 2026-09-10: controller-only diagnostic, added after a real incident --
@@ -1035,7 +1066,13 @@ actor self {
     switch (result) {
       case (#Ok(idx)) { #Ok(idx) };
       case (#Err(e)) {
-        Map.add(pendingPayouts, Principal.compare, caller, owed);
+        // Add back rather than overwrite: another failed payout for this
+        // caller may have been queued while this transfer was in flight.
+        let current = switch (Map.get(pendingPayouts, Principal.compare, caller)) {
+          case (?n) { n };
+          case null { 0 };
+        };
+        Map.add(pendingPayouts, Principal.compare, caller, current + owed);
         #Err(e);
       };
     };
