@@ -91,6 +91,14 @@ actor self {
   // so it could occupy a seat forever, blocking a spot on an otherwise-full
   // table, with no automatic recovery at all until now.
   let SIT_OUT_TIMEOUT_NANOS : Int = 15 * 60 * 1_000_000_000;
+  // 2026-10-02: a sittingOut seat with a ZERO stack (busted, auto-sat-out
+  // at Showdown cleanup) can't do anything but top up or leave, so it
+  // gets a much shorter window than a voluntary sit-out before being
+  // vacated. transient, same reason as MIN_WAKE_GAP_NANOS below.
+  transient let BUSTED_TIMEOUT_NANOS : Int = 3 * 60 * 1_000_000_000;
+  func sitOutTimeoutFor(s : Types.Seat) : Int {
+    if (s.stack == 0) { BUSTED_TIMEOUT_NANOS } else { SIT_OUT_TIMEOUT_NANOS };
+  };
   // Halved from 2s (2026-09-09) to shave the worst-case slack off every
   // timer-driven transition (action timeouts, the Showdown pause, dealing
   // the next hand) -- tick() itself is cheap when idle (a handful of Map
@@ -1064,7 +1072,11 @@ actor self {
     let seatIndex = switch (findSeat(t, caller)) { case (?i) { i }; case null { return #Err(#NotSeated) } };
     t.seats[seatIndex].sittingOut := sittingOut;
     if (sittingOut) {
-      Map.add(sittingOutSince, Text.compare, afkKey(tableId, seatIndex), Time.now());
+      // Don't restart a clock that's already running (a repeated
+      // sitOut(true) must not extend the timeout).
+      if (Map.get(sittingOutSince, Text.compare, afkKey(tableId, seatIndex)) == null) {
+        Map.add(sittingOutSince, Text.compare, afkKey(tableId, seatIndex), Time.now());
+      };
     } else {
       Map.remove(sittingOutSince, Text.compare, afkKey(tableId, seatIndex));
     };
@@ -1419,7 +1431,7 @@ actor self {
         switch (Map.get(sittingOutSince, Text.compare, key)) {
           case null { Map.add(sittingOutSince, Text.compare, key, Time.now()) };
           case (?since) {
-            if (Time.now() - since >= SIT_OUT_TIMEOUT_NANOS) {
+            if (Time.now() - since >= sitOutTimeoutFor(s)) {
               switch (s.occupant) {
                 case (?p) { ignore (await* doLeave(t, i, p)) };
                 case null {};
@@ -1463,7 +1475,13 @@ actor self {
       s.committedThisRound := 0;
       if (s.stack == 0 and s.occupant != null) {
         s.sittingOut := true;
-        Map.add(sittingOutSince, Text.compare, afkKey(t.id, i), Time.now());
+        // 2026-10-02, real bug: this used to re-add Time.now() at EVERY
+        // Showdown, so a busted seat's clock restarted after each hand the
+        // others played and it was never vacated while the table stayed
+        // busy. Only start the clock if it isn't already running.
+        if (Map.get(sittingOutSince, Text.compare, afkKey(t.id, i)) == null) {
+          Map.add(sittingOutSince, Text.compare, afkKey(t.id, i), Time.now());
+        };
       };
       i += 1;
     };
@@ -2257,7 +2275,7 @@ actor self {
       if (s.occupant != null) { occupied += 1 };
       if (s.occupant != null and s.sittingOut and not s.inHand) {
         switch (Map.get(sittingOutSince, Text.compare, afkKey(t.id, i))) {
-          case (?since) { consider(since + SIT_OUT_TIMEOUT_NANOS) };
+          case (?since) { consider(since + sitOutTimeoutFor(s)) };
           case null { consider(now) };
         };
       };

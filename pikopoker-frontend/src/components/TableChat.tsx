@@ -78,9 +78,13 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
     };
   }, [open, tableId, privateCode]);
 
+  // Only follow new messages if the viewer is already at (or near) the
+  // bottom -- otherwise scrolling up to read older ones would get yanked
+  // back down on every poll.
+  const stickToBottomRef = useRef(true);
   useEffect(() => {
     if (!listRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
+    if (stickToBottomRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, open]);
 
   async function handleSend() {
@@ -95,6 +99,7 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
         setError("Message not sent -- try again.");
       } else {
         setText("");
+        stickToBottomRef.current = true;
         const msgs = await getPikopokerActor().getTableChat(tableId, privateCode ?? null);
         setMessages(msgs);
         if (msgs.length > 0) lastSeenTimestampRef.current = msgs[msgs.length - 1].timestamp;
@@ -112,7 +117,10 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
       <button
         type="button"
         className="table-chat-toggle"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          stickToBottomRef.current = true;
+          setOpen((v) => !v);
+        }}
         aria-label={open ? "Close table chat" : hasUnread ? "Open table chat -- unread messages" : "Open table chat"}
         aria-expanded={open}
       >
@@ -121,7 +129,14 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
       </button>
       {open && (
         <div className="table-chat-panel">
-          <div className="table-chat-messages" ref={listRef}>
+          <div
+            className="table-chat-messages"
+            ref={listRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            }}
+          >
             {messages.length === 0 ? (
               <p className="empty-state small">No messages yet -- say hi. Messages disappear after 24h.</p>
             ) : (

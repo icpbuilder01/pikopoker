@@ -1987,6 +1987,13 @@ section.block > *:last-child {
        then .table-chat-panel/.table-chat-messages below flex to fill it
        instead of stopping at their own fixed content height. */
     align-self: stretch;
+    /* 2026-10-02: without this the open column's own content (every chat
+       message) counted toward the grid row's height, so each new message
+       grew the whole row and the page scrolled down forever. Size
+       containment takes the messages out of that calculation -- the
+       column now just stretches to the felt's height and
+       .table-chat-messages scrolls inside it. */
+    contain: size;
   }
 
   .felt-wrap {
