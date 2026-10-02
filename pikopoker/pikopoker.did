@@ -132,6 +132,7 @@ type ChatError =
    Anonymous;
    EmptyMessage;
    MessageTooLong;
+   RateLimited;
    TableNotFound;
  };
 type ActionError = 

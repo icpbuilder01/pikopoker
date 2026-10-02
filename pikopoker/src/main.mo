@@ -324,6 +324,13 @@ actor self {
   let CHAT_TTL_NANOS : Int = 24 * 60 * 60 * 1_000_000_000;
   let CHAT_MAX_MESSAGES : Nat = 200; // hard cap per table regardless of age, bounds worst-case memory
   let CHAT_MAX_MESSAGE_LEN : Nat = 240;
+  // 2026-10-03: per-sender rate limit -- every sendTableChat is an update
+  // call this canister pays cycles for, so unlimited spam was a cheap way
+  // to drain it (and flood the 200-message window). Rolling 60s window,
+  // counted across all tables. transient: resetting on upgrade is harmless.
+  transient let CHAT_RATE_LIMIT : Nat = 10;
+  transient let CHAT_RATE_WINDOW_NANOS : Int = 60 * 1_000_000_000;
+  transient let chatSendTimes : Map.Map<Principal, [Int]> = Map.empty<Principal, [Int]>();
 
   func freshChatMessages(tableId : Nat) : [Types.ChatMessage] {
     let now = Time.now();
@@ -538,6 +545,16 @@ actor self {
     let trimmed = Text.trim(text, #char ' ');
     if (Text.size(trimmed) == 0) { return #Err(#EmptyMessage) };
     if (Text.size(trimmed) > CHAT_MAX_MESSAGE_LEN) { return #Err(#MessageTooLong) };
+    let now = Time.now();
+    let recent = switch (Map.get(chatSendTimes, Principal.compare, caller)) {
+      case (?ts) { Array.filter<Int>(ts, func(at) { now - at < CHAT_RATE_WINDOW_NANOS }) };
+      case null { [] };
+    };
+    if (recent.size() >= CHAT_RATE_LIMIT) {
+      Map.add(chatSendTimes, Principal.compare, caller, recent);
+      return #Err(#RateLimited);
+    };
+    Map.add(chatSendTimes, Principal.compare, caller, Array.concat<Int>(recent, [now]));
     let fresh = freshChatMessages(tableId);
     let appended = Array.concat<Types.ChatMessage>(fresh, [{ sender = caller; text = trimmed; timestamp = Time.now() }]);
     // Keep only the most recent CHAT_MAX_MESSAGES regardless of age -- a
