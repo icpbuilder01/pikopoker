@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { getPikopokerActor } from "../lib/actors";
 import { shortPrincipal } from "../lib/format";
-import type { ChatMessage } from "../bindings/pikopoker/pikopoker";
+import { ChatError, type ChatMessage } from "../bindings/pikopoker/pikopoker";
 
 interface TableChatProps {
   tableId: bigint;
@@ -96,7 +96,11 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
     try {
       const result = await getPikopokerActor(identity).sendTableChat(tableId, trimmed, privateCode ?? null);
       if (result.__kind__ === "Err") {
-        setError("Message not sent -- try again.");
+        setError(
+          result.Err === ChatError.RateLimited
+            ? "Slow down -- max 10 messages per minute."
+            : "Message not sent -- try again.",
+        );
       } else {
         setText("");
         stickToBottomRef.current = true;

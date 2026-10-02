@@ -188,5 +188,5 @@ module {
     timestamp : Int; // Time.now(), nanoseconds
   };
 
-  public type ChatError = { #Anonymous; #TableNotFound; #EmptyMessage; #MessageTooLong };
+  public type ChatError = { #Anonymous; #TableNotFound; #EmptyMessage; #MessageTooLong; #RateLimited };
 }
