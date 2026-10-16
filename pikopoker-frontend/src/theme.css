@@ -509,3 +509,9 @@ section.block > h2 .live-pill,
     font-size: 0.74rem;
   }
 }
+
+/* Keep the colored half of the headline in one piece: it moves to the next
+   line as a whole instead of breaking mid-phrase on phones. */
+.app-title h1 em {
+  white-space: nowrap;
+}
