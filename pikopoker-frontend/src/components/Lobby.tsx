@@ -172,8 +172,9 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
   }
 
   return (
-    <>
-      <section className="block">
+    <div className="app-grid">
+      <div className="app-main">
+      <section className="block game-panel">
         <h2>Public tables</h2>
         {publicTables === null ? (
           <p className="empty-state">Loading tables...</p>
@@ -235,7 +236,9 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
           )}
         </section>
       )}
+      </div>
 
+      <aside className="app-side">
       <section className="block">
         <h2>Join a private table</h2>
         <div className="join-form">
@@ -308,6 +311,7 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
           </div>
         )}
       </section>
-    </>
+      </aside>
+    </div>
   );
 }

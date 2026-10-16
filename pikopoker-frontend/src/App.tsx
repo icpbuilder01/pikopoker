@@ -8,6 +8,8 @@ import { Wallet } from "./components/Wallet";
 import { Rules } from "./components/Rules";
 import { ChipAmount } from "./components/ChipAmount";
 import "./App.css";
+import "./theme.css";
+import { AppNav } from "./components/AppNav";
 
 type View = { type: "lobby" } | { type: "table"; tableId: bigint; code?: string };
 
@@ -174,7 +176,7 @@ function App() {
   }
 
   return (
-    <main className={`page${view.type === "table" ? " in-table" : ""}`}>
+    <main className={`page app-shell${view.type === "table" ? " in-table" : ""}`}>
       {showWallet && identity && (
         <Wallet
           identity={identity}
@@ -185,56 +187,44 @@ function App() {
       )}
       {showRules && <Rules onClose={() => setShowRules(false)} />}
 
-      <header className="header">
-        <button className="brand" onClick={goToLobby}>
-          <img src="/piko-logo.svg" alt="" className="brand-logo" />
-          <div className="brand-text">
-            <span className="brand-name">&#127183; PikoPoker</span>
-            <span className="brand-ticker">No-Limit Hold'em, bet in PIKO</span>
-          </div>
+      <AppNav current="poker">
+        <button className="button secondary small" onClick={() => setShowRules(true)}>
+          Rules
         </button>
-        <div className="wallet-box">
-          <button className="button secondary small" onClick={() => setShowRules(true)}>
-            Rules
+        {identity && (
+          <button className="button secondary small wallet-balance-button" onClick={() => setShowWallet(true)}>
+            {balance !== null ? <ChipAmount amount={balance} unit="PIKO" /> : "Wallet"}
           </button>
-          {identity && (
-            <button className="button secondary small wallet-balance-button" onClick={() => setShowWallet(true)}>
-              {balance !== null ? <ChipAmount amount={balance} unit="PIKO" /> : "Wallet"}
+        )}
+        {identity ? (
+          <button className="button secondary small" onClick={handleLogout}>
+            Log out
+          </button>
+        ) : (
+          identityLoaded && (
+            <button className="button" onClick={handleLogin}>
+              Log in
             </button>
-          )}
-          {identity ? (
-            <button className="button secondary" onClick={handleLogout}>
-              Log out
-            </button>
-          ) : (
-            identityLoaded && (
-              <button className="button" onClick={handleLogin}>
-                Log in with Internet Identity
-              </button>
-            )
-          )}
-        </div>
-      </header>
+          )
+        )}
+      </AppNav>
 
       {!identityLoaded ? (
         <div className="empty-state">Loading...</div>
       ) : (
         <>
-          {view.type === "lobby" && !identity && (
-            <section className="hero">
-              <div className="tag-row">
+          {view.type === "lobby" && (
+            <div className="app-title">
+              <h1>
+                Take <em>a seat.</em>
+              </h1>
+              <p className="app-sub">
+                No-Limit Texas Hold'em in PIKO, entirely on-chain. Spectate any table without logging in.
                 <span className="tag">On-chain, no house edge secrets</span>
                 <span className="tag spark">Public &amp; private tables</span>
                 <span className="tag">2-6 player tables</span>
-              </div>
-              <h1>Take a seat.</h1>
-              <p>
-                No-Limit Texas Hold'em, bet in PIKO, running entirely on-chain on the Internet
-                Computer. Sit at a public table with a fixed stake, or start a private table and
-                share the invite link with friends. Spectate any table without logging in -- log
-                in with Internet Identity when you're ready to buy in.
               </p>
-            </section>
+            </div>
           )}
 
           {view.type === "lobby" ? (
