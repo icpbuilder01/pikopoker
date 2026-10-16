@@ -2086,6 +2086,44 @@ section.block > *:last-child {
   }
 }
 
+/* 2026-10-13: real bug, seen with the site embedded in an OpenChat
+   channel (~890px-wide frame). The three-column row above (chat | felt |
+   400px betting panel) left the felt only ~380px wide there, so seats,
+   pills and the centre text crushed into each other. Below ~1120px the
+   betting panel moves under the felt instead (still beside the chat
+   column), giving the felt the full remaining width. Scoped to
+   `.embedded` (set in main.tsx when framed) so the direct site's own
+   layout stays exactly as it was at every width.
+   Stacked, felt + panel overflowed the frame's ~830px height, so players
+   had to scroll for every bet: the panel is scaled down as a whole
+   (zoom keeps its proportions) and the felt is capped so its 16/10
+   height leaves room for the panel below it in one viewport. */
+@media (min-width: 641px) and (max-width: 1119px) {
+  .embedded .table-layout {
+    --embedded-felt-max: max(420px, calc((100vh - 380px) * 1.6));
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .embedded .felt-wrap {
+    max-width: var(--embedded-felt-max);
+    margin-bottom: 0;
+  }
+
+  /* Same width as the felt and centred under it, so the two read as one
+     block. Divided by the zoom since lengths on a zoomed element are
+     scaled by it too. */
+  .embedded .action-bar.modern {
+    grid-column: 2;
+    align-self: start;
+    zoom: 0.78;
+    width: 100%;
+    max-width: calc(var(--embedded-felt-max) / 0.78);
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 @media (max-width: 640px) {
   .felt-wrap {
     aspect-ratio: 3 / 4;
