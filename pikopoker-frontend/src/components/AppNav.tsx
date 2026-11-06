@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 // Shared PIKO top bar: brand, app switcher (each app keeps its own accent
 // color), and whatever account controls the app passes in as children.
-export type PikoAppId = "mine" | "dice" | "blackjack" | "poker" | "pixel";
+export type PikoAppId = "mine" | "dice" | "blackjack" | "poker" | "pixel" | "monitor";
 
 const PIKO_HOME = "https://www.piko.network/";
 const PIKO_APPS: { id: PikoAppId; label: string; url: string; color: string }[] = [
@@ -11,6 +11,7 @@ const PIKO_APPS: { id: PikoAppId; label: string; url: string; color: string }[] 
   { id: "blackjack", label: "Blackjack", url: "https://bcd2h-5iaaa-aaaai-ax4hq-cai.icp.net/", color: "#ff6b5e" },
   { id: "poker", label: "Poker", url: "https://2uuxi-qyaaa-aaaac-qhbyq-cai.icp.net/", color: "#ffc35a" },
   { id: "pixel", label: "Pixel", url: "https://cglm2-byaaa-aaaac-bf4aq-cai.icp.net/", color: "#d07af0" },
+  { id: "monitor", label: "Monitor", url: "https://k6tpq-iqaaa-aaaaa-qhpfq-cai.icp.net/", color: "#4fd6e8" },
 ];
 
 export function AppNav({ current, children }: { current: PikoAppId; children?: ReactNode }) {
