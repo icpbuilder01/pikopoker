@@ -804,7 +804,7 @@ actor self {
         // on a table that no longer exists, their buy-in would be lost.
         switch (Map.get(tables, Nat.compare, t.id)) {
           case null {
-            await refundNet(caller, t.buyIn);
+            await* refundNet(caller, t.buyIn);
             return #Err(#TableNotFound);
           };
           case (?_) {};
@@ -816,7 +816,7 @@ actor self {
           // Refund: the seat filled while we were waiting on the transfer,
           // or (only possible once the pendingFunds lock has expired) this
           // same caller got seated elsewhere at this table meanwhile.
-          await refundNet(caller, t.buyIn);
+          await* refundNet(caller, t.buyIn);
           return #Err(if (seat.occupant != null) { #SeatTaken } else { #AlreadySeatedAtTable });
         };
         seat.occupant := ?caller;
@@ -828,7 +828,12 @@ actor self {
     };
   };
 
-  func refundOrQueue(to : Principal, amount : Nat) : async () {
+  // async* (not async) on the helpers below that move funds: they run inside
+  // the caller's message instead of as self-calls. A self-call can fail to even
+  // be sent when the canister is short of cycles, and that failure would skip
+  // the rest of the caller (a payout or refund lost). Found by a load test on
+  // PikoBlackjack, 2026-11-07.
+  func refundOrQueue(to : Principal, amount : Nat) : async* () {
     let Ledger = ledger();
     let result = try {
       await Ledger.icrc1_transfer({
@@ -855,9 +860,9 @@ actor self {
   // Refunds PIKO this canister just received, minus the ledger fee the
   // refund itself costs -- 2026-10-03 audit: refunding the full amount
   // made the canister pay that fee out of other players' escrow.
-  func refundNet(to : Principal, amount : Nat) : async () {
+  func refundNet(to : Principal, amount : Nat) : async* () {
     let fee = try { await ledger().icrc1_fee() } catch (_e) { 10_000 };
-    if (amount > fee) { await refundOrQueue(to, amount - fee) };
+    if (amount > fee) { await* refundOrQueue(to, amount - fee) };
   };
 
   public shared ({ caller }) func joinPublicTable(tableId : Nat, seatIndex : Nat) : async {
@@ -888,7 +893,7 @@ actor self {
         // just the same, since a direct `await` never returns either
         // way. Switched to `nudgeDeal`, which can't block this function
         // at all regardless of what triggerDeal does.
-        if (r == #Ok(())) { ignore nudgeDeal(t.id) };
+        if (r == #Ok(())) { try { ignore nudgeDeal(t.id) } catch (_e) {} };
         r;
       };
     };
@@ -924,7 +929,7 @@ actor self {
         // just the same, since a direct `await` never returns either
         // way. Switched to `nudgeDeal`, which can't block this function
         // at all regardless of what triggerDeal does.
-        if (r == #Ok(())) { ignore nudgeDeal(t.id) };
+        if (r == #Ok(())) { try { ignore nudgeDeal(t.id) } catch (_e) {} };
         r;
       };
     };
@@ -1019,7 +1024,7 @@ actor self {
     let fee = try { await Ledger.icrc1_fee() } catch (_e) { 10_000 };
     let payout = if (amount > fee) { amount - fee } else { 0 };
     if (payout > 0) {
-      await refundOrQueue(caller, payout);
+      await* refundOrQueue(caller, payout);
     };
     clearPendingFunds(caller);
     #Ok(payout);
@@ -1086,7 +1091,7 @@ actor self {
           t.seats[seatIndex].stack += amount;
           #Ok(());
         } else {
-          await refundNet(caller, amount);
+          await* refundNet(caller, amount);
           #Err(#SeatOutOfRange);
         };
       };
@@ -1189,7 +1194,7 @@ actor self {
     // `nudgeDeal` (see its own comment) also means a hung self-call here
     // can't block this function's own return the way a direct `await`
     // could.
-    if (not sittingOut) { ignore nudgeDeal(tableId) };
+    if (not sittingOut) { try { ignore nudgeDeal(tableId) } catch (_e) {} };
     #Ok;
   };
 
