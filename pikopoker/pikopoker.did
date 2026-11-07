@@ -120,6 +120,7 @@ type CreatePrivateError =
    InvalidBuyIn;
    InvalidName;
    TemporarilyUnavailable;
+   TooManyPrivateTables;
  };
 type ChatMessage = 
  record {

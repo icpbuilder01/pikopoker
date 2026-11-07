@@ -38,6 +38,8 @@ function createErrorMessage(err: CreatePrivateError): string {
       return "Enter a table name (1-32 characters).";
     case CreatePrivateError.TemporarilyUnavailable:
       return "Couldn't generate a table code right now -- try again.";
+    case CreatePrivateError.TooManyPrivateTables:
+      return "You already have 2 private tables. An empty one is removed after 30 minutes.";
     default:
       return "Couldn't create the table.";
   }

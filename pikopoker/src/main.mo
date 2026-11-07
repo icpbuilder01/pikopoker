@@ -133,6 +133,17 @@ actor self {
   var freePlay4Seeded : Bool = false;
   let tables : Map.Map<Nat, Types.Table> = Map.empty<Nat, Types.Table>();
   let privateCodes : Map.Map<Text, Nat> = Map.empty<Text, Nat>();
+  // Who created each private table, for the per-player limit below. Separate
+  // maps rather than new Types.Table fields, which would trap on upgrade (see
+  // afkTimeouts' own comment). A table from before this existed has no entry,
+  // so it counts against nobody.
+  let privateTableCreators : Map.Map<Nat, Principal> = Map.empty<Nat, Principal>();
+  // Since when a private table has had nobody seated. Absent = occupied, or
+  // not yet seen empty by a sweep. Any join clears it, so the countdown only
+  // restarts once the table is empty again.
+  let privateEmptySince : Map.Map<Nat, Int> = Map.empty<Nat, Int>();
+  transient let MAX_PRIVATE_TABLES_PER_CREATOR : Nat = 2;
+  transient let EMPTY_PRIVATE_TABLE_TTL_NANOS : Int = 30 * 60 * 1_000_000_000;
   // Locks concurrent join/leave/topUp calls from the same principal --
   // same reasoning as dice's pendingBets: set synchronously before the
   // first await so a burst of concurrent calls from one principal can't
@@ -623,7 +634,15 @@ actor self {
     out;
   };
 
-  public shared ({ caller }) func createPrivateTable(name : Text, buyIn : Nat) : async {
+  func privateTablesCreatedBy(p : Principal) : Nat {
+    var n = 0;
+    for ((_, creator) in Map.entries(privateTableCreators)) {
+      if (creator == p) { n += 1 };
+    };
+    n;
+  };
+
+  public shared ({ caller }) func createPrivateTable<system>(name : Text, buyIn : Nat) : async {
     #Ok : { id : Nat; code : Text };
     #Err : Types.CreatePrivateError;
   } {
@@ -636,6 +655,9 @@ actor self {
     // ones. Any other out-of-range amount is still rejected.
     if (buyIn != 0 and (buyIn < 10_000_000_000 or buyIn > 100_000_000_000_000)) {
       return #Err(#InvalidBuyIn); // 100 PIKO .. 1,000,000 PIKO
+    };
+    if (privateTablesCreatedBy(caller) >= MAX_PRIVATE_TABLES_PER_CREATOR) {
+      return #Err(#TooManyPrivateTables);
     };
     // 2026-09-15: real vulnerability, found in a full security audit --
     // this used to seed the code from `id * 7919 + Time.now() % 1_000_000`,
@@ -655,6 +677,11 @@ actor self {
       Debug.print("createPrivateTable: raw_rand failed, caller=" # Principal.toText(caller) # " error=" # Error.message(e));
       return #Err(#TemporarilyUnavailable);
     };
+    // Checked again: concurrent calls from one caller all pass the check above
+    // before any of them gets past the await.
+    if (privateTablesCreatedBy(caller) >= MAX_PRIVATE_TABLES_PER_CREATOR) {
+      return #Err(#TooManyPrivateTables);
+    };
     let id = nextTableId;
     nextTableId += 1;
     var code = randomCode(Cards.entropyToNat(Blob.toArray(entropy)));
@@ -667,8 +694,12 @@ actor self {
     // stack every seat gets), not from buyIn=0 itself -- same convention
     // createFreeTable already uses for the public Free Play table.
     let (sb, bb) = if (buyIn == 0) { (FREE_CHIPS / 200, FREE_CHIPS / 100) } else { (buyIn / 200, buyIn / 100) };
-    Map.add(tables, Nat.compare, id, newTable(id, trimmedName, #Private({ code }), buyIn, sb, bb));
+    let table = newTable(id, trimmedName, #Private({ code }), buyIn, sb, bb);
+    Map.add(tables, Nat.compare, id, table);
     Map.add(privateCodes, Text.compare, code, id);
+    Map.add(privateTableCreators, Nat.compare, id, caller);
+    Map.add(privateEmptySince, Nat.compare, id, Time.now());
+    wakeForTable<system>(table);
     #Ok({ id; code });
   };
 
@@ -732,6 +763,10 @@ actor self {
     if (seat.occupant != null) { return #Err(#SeatTaken) };
     if (isSeatedAt(t, caller)) { return #Err(#AlreadySeatedAtTable) };
 
+    // A join in progress cancels the empty-table countdown, so the table is
+    // not removed while the buy-in transfer below is in flight.
+    Map.remove(privateEmptySince, Nat.compare, t.id);
+
     if (t.buyIn == 0) {
       // Play-money table -- no real funds move, so no await/re-check race
       // is even possible here; just hand out a complimentary stack.
@@ -764,6 +799,16 @@ actor self {
 
     switch (result) {
       case (#Ok(_)) {
+        // The table may have been removed during the await if the transfer
+        // took longer than the whole empty-table countdown: never seat anyone
+        // on a table that no longer exists, their buy-in would be lost.
+        switch (Map.get(tables, Nat.compare, t.id)) {
+          case null {
+            await refundNet(caller, t.buyIn);
+            return #Err(#TableNotFound);
+          };
+          case (?_) {};
+        };
         // Re-check the seat is still free -- the transfer's await gave up
         // the synchronous prefix's exclusivity, another join for the same
         // seat could have landed while this one was in flight.
@@ -776,6 +821,7 @@ actor self {
         };
         seat.occupant := ?caller;
         seat.stack := t.buyIn;
+        Map.remove(privateEmptySince, Nat.compare, t.id);
         #Ok(());
       };
       case (#Err(e)) { #Err(#TransferFailed(e)) };
@@ -2098,6 +2144,9 @@ actor self {
     Debug.print("tick: start, tickCount=" # debug_show (tickCount + 1) # " tables=" # debug_show (Map.size(tables)));
     tickCount += 1;
     lastTickAt := Time.now();
+    // Before the sweep, with no await in between, so no table is removed while
+    // the loop below is iterating.
+    cleanupEmptyPrivateTables();
     for ((_, t) in Map.entries(tables)) {
       // Deliberately OUTSIDE the phase switch below, unlike every other
       // per-table job here -- a sittingOut-but-not-inHand seat can exist
@@ -2316,6 +2365,61 @@ actor self {
   // per-table branches check: sit-out expiry, dealing / solo-idle cleanup
   // while waiting, showdown cleanup, action timeout. `null` = nothing
   // pending on this table.
+  func forgetTableState(t : Types.Table) {
+    Map.remove(privateTableCreators, Nat.compare, t.id);
+    Map.remove(privateEmptySince, Nat.compare, t.id);
+    Map.remove(tableChats, Nat.compare, t.id);
+    Map.remove(soloIdleSince, Nat.compare, t.id);
+    Map.remove(realShowdownTables, Nat.compare, t.id);
+    Map.remove(dealingTables, Nat.compare, t.id);
+    Map.remove(lastTriggerDealAt, Nat.compare, t.id);
+    switch (t.kind) {
+      case (#Private({ code })) { Map.remove(privateCodes, Text.compare, code) };
+      case (#Public) {};
+    };
+    var i = 0;
+    while (i < t.seats.size()) {
+      resetAfkTimeouts(t.id, i);
+      resetSittingOutSince(t.id, i);
+      i += 1;
+    };
+  };
+
+  // True for a private table with nobody seated and no hand running: the only
+  // state in which it holds no player funds and can safely be removed.
+  func isIdleEmptyPrivateTable(t : Types.Table) : Bool {
+    let isPrivate = switch (t.kind) { case (#Private _) { true }; case (#Public) { false } };
+    if (not isPrivate or t.phase != #WaitingForPlayers) { return false };
+    if (Map.get(dealingTables, Nat.compare, t.id) != null) { return false };
+    for (s in t.seats.vals()) { if (s.occupant != null) { return false } };
+    true;
+  };
+
+  // Removes a private table once it has been empty for
+  // EMPTY_PRIVATE_TABLE_TTL_NANOS, so abandoned ones don't pile up forever.
+  func cleanupEmptyPrivateTables() {
+    let now = Time.now();
+    var expired : [Types.Table] = [];
+    for ((id, t) in Map.entries(tables)) {
+      if (isIdleEmptyPrivateTable(t)) {
+        switch (Map.get(privateEmptySince, Nat.compare, id)) {
+          case (?since) {
+            if (now - since >= EMPTY_PRIVATE_TABLE_TTL_NANOS) {
+              expired := Array.concat(expired, [t]);
+            };
+          };
+          case null { Map.add(privateEmptySince, Nat.compare, id, now) };
+        };
+      } else {
+        Map.remove(privateEmptySince, Nat.compare, id);
+      };
+    };
+    for (t in expired.vals()) {
+      forgetTableState(t);
+      Map.remove(tables, Nat.compare, t.id);
+    };
+  };
+
   func tableWakeAt(t : Types.Table) : ?Int {
     let now = Time.now();
     var best : ?Int = null;
@@ -2355,6 +2459,12 @@ actor self {
     };
     if (occupied > 0 or t.phase != #WaitingForPlayers) {
       consider(now + MAX_WAKE_GAP_NANOS);
+    };
+    if (isIdleEmptyPrivateTable(t)) {
+      switch (Map.get(privateEmptySince, Nat.compare, t.id)) {
+        case (?since) { consider(since + EMPTY_PRIVATE_TABLE_TTL_NANOS) };
+        case null { consider(now) };
+      };
     };
     best;
   };
@@ -2608,6 +2718,7 @@ actor self {
     for (s in t.seats.vals()) {
       if (s.occupant != null) { Runtime.trap("table has an occupied seat") };
     };
+    forgetTableState(t);
     Map.remove(tables, Nat.compare, tableId);
   };
 
