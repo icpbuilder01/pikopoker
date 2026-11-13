@@ -565,6 +565,12 @@ actor self {
       Map.add(chatSendTimes, Principal.compare, caller, recent);
       return #Err(#RateLimited);
     };
+    if (not chatPrivileged(caller)) {
+      let credit = chatSharedCreditNow(now);
+      if (credit < CHAT_SHARED_REFILL_NANOS) { return #Err(#RateLimited) };
+      chatSharedCredit := credit - CHAT_SHARED_REFILL_NANOS;
+      chatSharedCreditAt := now;
+    };
     Map.add(chatSendTimes, Principal.compare, caller, Array.concat<Int>(recent, [now]));
     let fresh = freshChatMessages(tableId);
     let appended = Array.concat<Types.ChatMessage>(fresh, [{ sender = caller; text = trimmed; timestamp = Time.now() }]);
@@ -659,6 +665,7 @@ actor self {
     if (privateTablesCreatedBy(caller) >= MAX_PRIVATE_TABLES_PER_CREATOR) {
       return #Err(#TooManyPrivateTables);
     };
+    if (enterPaidRefused(caller, Time.now())) { return #Err(#TemporarilyUnavailable) };
     // 2026-09-15: real vulnerability, found in a full security audit --
     // this used to seed the code from `id * 7919 + Time.now() % 1_000_000`,
     // NOT real randomness (unlike the deck shuffle below, which already
@@ -873,11 +880,15 @@ actor self {
     if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
+    let now = Time.now();
+    let paid = switch (Map.get(tables, Nat.compare, tableId)) { case (?t) { t.buyIn > 0 }; case null { false } };
+    if (paid and enterPaidRefused(caller, now)) { return #Err(#TransferFailed(#TemporarilyUnavailable)) };
     setPendingFunds(caller);
     let outcome = switch (Map.get(tables, Nat.compare, tableId)) {
       case null { #Err(#TableNotFound) };
       case (?t) {
         let r = await* doJoin(t, seatIndex, caller);
+        if (paid) { notePaidOutcome(caller, r == #Ok(()), now) };
         // 2026-09-10: a real bug, found live -- this self-call failing
         // uncaught (cycles shortage, or the same self-call flakiness
         // noted on triggerDeal's own comment) used to skip the
@@ -909,11 +920,15 @@ actor self {
     if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
+    let now = Time.now();
+    let paid = switch (findTableByCode(code)) { case (?t) { t.buyIn > 0 }; case null { false } };
+    if (paid and enterPaidRefused(caller, now)) { return #Err(#TransferFailed(#TemporarilyUnavailable)) };
     setPendingFunds(caller);
     let outcome = switch (findTableByCode(code)) {
       case null { #Err(#TableNotFound) };
       case (?t) {
         let r = await* doJoin(t, seatIndex, caller);
+        if (paid) { notePaidOutcome(caller, r == #Ok(()), now) };
         // 2026-09-10: a real bug, found live -- this self-call failing
         // uncaught (cycles shortage, or the same self-call flakiness
         // noted on triggerDeal's own comment) used to skip the
@@ -1068,6 +1083,8 @@ actor self {
     if (isPendingFundsLocked(caller)) {
       return #Err(#TransferFailed(#TemporarilyUnavailable));
     };
+    let now = Time.now();
+    if (enterPaidRefused(caller, now)) { return #Err(#TransferFailed(#TemporarilyUnavailable)) };
     setPendingFunds(caller);
     let Ledger = ledger();
     let result = try {
@@ -1097,6 +1114,7 @@ actor self {
       };
       case (#Err(e)) { #Err(#TransferFailed(e)) };
     };
+    notePaidOutcome(caller, outcome == #Ok(()), now);
     clearPendingFunds(caller);
     outcome;
   };
@@ -2818,5 +2836,265 @@ actor self {
       case null { Runtime.trap("table not found") };
     };
     await* dealNextHand(t);
+  };
+
+  // ---- Anti-spam (2026-11-13) ----
+  // On the IC the canister pays for every update it accepts, and a fresh
+  // identity costs nothing. `inspect` below refuses, for free, any ingress
+  // call that would do nothing (not your turn, seat taken, nothing due...).
+  // Calls from other canisters skip inspect; the methods keep their own
+  // checks. Free tables stay open to anyone by design.
+  //
+  // Real-money entries (paid join, top-up, private table creation) cost a
+  // ledger call even when they fail. Known payers (anyone who has bought in
+  // or topped up for real) get 3 free failures, then a wait of 10 s that
+  // doubles per failure up to 1 h; one success clears it. Everyone else
+  // shares a small newcomer allowance: 30 at once, then one every 2 min.
+  let knownPayers : Map.Map<Principal, Bool> = Map.empty<Principal, Bool>();
+  func isKnownPayer(p : Principal) : Bool { Map.containsKey(knownPayers, Principal.compare, p) };
+
+  transient let NEWCOMER_BURST : Int = 30;
+  transient let NEWCOMER_REFILL_NANOS : Int = 120_000_000_000;
+  transient var newcomerCredit : Int = NEWCOMER_BURST * NEWCOMER_REFILL_NANOS;
+  transient var newcomerCreditAt : Int = 0;
+  transient let FREE_FAILURES : Nat = 3;
+  transient let FAILURE_BACKOFF_BASE_NANOS : Int = 10_000_000_000;
+  transient let FAILURE_BACKOFF_MAX_NANOS : Int = 3_600_000_000_000;
+  transient let failureStreaks : Map.Map<Principal, (Nat, Int)> = Map.empty<Principal, (Nat, Int)>();
+
+  func newcomerCreditNow(now : Int) : Int {
+    Int.min(NEWCOMER_BURST * NEWCOMER_REFILL_NANOS, newcomerCredit + (now - newcomerCreditAt));
+  };
+
+  func paidRefused(caller : Principal, now : Int) : Bool {
+    if (Principal.isAnonymous(caller)) { return true };
+    if (isKnownPayer(caller)) {
+      switch (Map.get(failureStreaks, Principal.compare, caller)) {
+        case (?(_, until)) { until > now };
+        case null { false };
+      };
+    } else { newcomerCreditNow(now) < NEWCOMER_REFILL_NANOS };
+  };
+
+  // In the method body: true = refuse; otherwise a newcomer uses one slot.
+  func enterPaidRefused(caller : Principal, now : Int) : Bool {
+    if (paidRefused(caller, now)) { return true };
+    if (not isKnownPayer(caller)) {
+      newcomerCredit := newcomerCreditNow(now) - NEWCOMER_REFILL_NANOS;
+      newcomerCreditAt := now;
+    };
+    false;
+  };
+
+  func notePaidOutcome(p : Principal, succeeded : Bool, now : Int) {
+    if (succeeded) {
+      Map.add(knownPayers, Principal.compare, p, true);
+      Map.remove(failureStreaks, Principal.compare, p);
+    } else if (isKnownPayer(p)) {
+      let streak = switch (Map.get(failureStreaks, Principal.compare, p)) { case (?(k, _)) { k + 1 }; case null { 1 } };
+      let wait = if (streak <= FREE_FAILURES) { 0 } else {
+        Int.min(FAILURE_BACKOFF_MAX_NANOS, FAILURE_BACKOFF_BASE_NANOS * (2 ** Nat.min(20, streak - FREE_FAILURES - 1 : Nat)));
+      };
+      Map.add(failureStreaks, Principal.compare, p, (streak, now + wait));
+    };
+  };
+
+  // Chat: players seated at a real-money table and known payers chat within
+  // the existing 10/min limit. Spectators and free-table players share a
+  // budget: 30 at once, then one message every 10 s for all of them.
+  transient let CHAT_SHARED_BURST : Int = 30;
+  transient let CHAT_SHARED_REFILL_NANOS : Int = 10_000_000_000;
+  transient var chatSharedCredit : Int = CHAT_SHARED_BURST * CHAT_SHARED_REFILL_NANOS;
+  transient var chatSharedCreditAt : Int = 0;
+  func chatSharedCreditNow(now : Int) : Int {
+    Int.min(CHAT_SHARED_BURST * CHAT_SHARED_REFILL_NANOS, chatSharedCredit + (now - chatSharedCreditAt));
+  };
+  func chatPrivileged(caller : Principal) : Bool {
+    if (isKnownPayer(caller)) { return true };
+    for ((_, t) in Map.entries(tables)) {
+      if (t.buyIn > 0 and isSeatedAt(t, caller)) { return true };
+    };
+    false;
+  };
+  func chatRateLimited(caller : Principal, now : Int) : Bool {
+    switch (Map.get(chatSendTimes, Principal.compare, caller)) {
+      case (?ts) { Array.filter<Int>(ts, func(at) { now - at < CHAT_RATE_WINDOW_NANOS }).size() >= CHAT_RATE_LIMIT };
+      case null { false };
+    };
+  };
+
+  // Something on this table is due now (deal, showdown cleanup, action
+  // timeout, idle seat cleanup), ignoring the 60 s safety heartbeat.
+  func tableDue(t : Types.Table, now : Int) : Bool {
+    switch (tableWakeAt(t)) { case (?at) { at <= now }; case null { false } };
+  };
+
+  system func inspect({
+    caller : Principal;
+    arg : Blob;
+    msg : {
+      #setPikoLedgerId : Any;
+      #lockPikoLedgerId : Any;
+      #getTableView : Any;
+      #getTableChat : Any;
+      #sendTableChat : () -> (Nat, Text, ?Text);
+      #getLobby : Any;
+      #getMyPrivateTables : Any;
+      #createPrivateTable : () -> (Text, Nat);
+      #joinPublicTable : () -> (Nat, Nat);
+      #joinPrivateTable : () -> (Text, Nat);
+      #leaveTable : () -> Nat;
+      #cancelLeaveRequest : () -> Nat;
+      #topUpStack : () -> (Nat, Nat);
+      #adminGetPendingPayouts : Any;
+      #claimPendingPayout : Any;
+      #clearMyStuckPendingFunds : Any;
+      #sitOut : () -> (Nat, Bool);
+      #triggerDeal : () -> Nat;
+      #fold : () -> Nat;
+      #checkOrCall : () -> Nat;
+      #betOrRaiseTo : () -> (Nat, Nat);
+      #tickWork : Any;
+      #getTickDiagnostics : Any;
+      #getDealReadiness : Any;
+      #getRakeBalance : Any;
+      #proposeRakeWithdrawal : Any;
+      #cancelPendingRakeWithdrawal : Any;
+      #executeRakeWithdrawal : Any;
+      #lockRakeWithdrawals : Any;
+      #setRakeBps : Any;
+      #adminRemoveEmptyTable : Any;
+      #adminClearPendingFunds : Any;
+      #adminKickSeat : Any;
+      #adminForceDealNextHand : Any;
+    };
+  }) : Bool {
+    if (Principal.isController(caller)) { return true };
+    if (arg.size() > 1024) { return false };
+    let now = Time.now();
+    let seated = func(tableId : Nat) : ?(Types.Table, Nat) {
+      switch (Map.get(tables, Nat.compare, tableId)) {
+        case (?t) { switch (findSeat(t, caller)) { case (?i) { ?(t, i) }; case null { null } } };
+        case null { null };
+      };
+    };
+    let isSeatedId = func(tableId : Nat) : Bool { switch (seated(tableId)) { case (?_) { true }; case null { false } } };
+    let canJoin = func(t : Types.Table, seatIndex : Nat) : Bool {
+      not Principal.isAnonymous(caller) and seatIndex < t.seats.size() and t.seats[seatIndex].occupant == null and not isSeatedAt(t, caller) and not isPendingFundsLocked(caller) and (t.buyIn == 0 or not paidRefused(caller, now));
+    };
+    let myTurn = func(tableId : Nat) : Bool {
+      switch (Map.get(tables, Nat.compare, tableId)) {
+        case (?t) { requireTurn(t, caller) != null };
+        case null { false };
+      };
+    };
+    switch msg {
+      case (#fold f) { myTurn(f()) };
+      case (#checkOrCall f) { myTurn(f()) };
+      case (#betOrRaiseTo f) { let (id, to) = f(); myTurn(id) and (switch (Map.get(tables, Nat.compare, id)) { case (?t) { to > t.currentBet }; case null { false } }) };
+      case (#joinPublicTable f) {
+        let (id, seat) = f();
+        switch (Map.get(tables, Nat.compare, id)) {
+          case (?t) { t.kind == #Public and canJoin(t, seat) };
+          case null { false };
+        };
+      };
+      case (#joinPrivateTable f) {
+        let (code, seat) = f();
+        switch (findTableByCode(code)) { case (?t) { canJoin(t, seat) }; case null { false } };
+      };
+      case (#leaveTable f) { isSeatedId(f()) };
+      case (#cancelLeaveRequest f) {
+        let id = f();
+        isSeatedId(id) and Map.containsKey(pendingLeaves, Text.compare, leaveKey(id, caller));
+      };
+      case (#sitOut f) {
+        let (id, v) = f();
+        switch (seated(id)) { case (?(t, i)) { t.seats[i].sittingOut != v }; case null { false } };
+      };
+      case (#topUpStack f) {
+        let (id, amount) = f();
+        switch (seated(id)) {
+          case (?(t, _)) { t.buyIn > 0 and amount > 0 and t.phase == #WaitingForPlayers and not isPendingFundsLocked(caller) and not paidRefused(caller, now) };
+          case null { false };
+        };
+      };
+      case (#createPrivateTable f) {
+        let (name, buyIn) = f();
+        let n = Text.size(Text.trim(name, #predicate(func(c) { c == ' ' })));
+        not Principal.isAnonymous(caller) and n > 0 and n <= 32 and (buyIn == 0 or (buyIn >= 10_000_000_000 and buyIn <= 100_000_000_000_000)) and privateTablesCreatedBy(caller) < MAX_PRIVATE_TABLES_PER_CREATOR and not paidRefused(caller, now);
+      };
+      case (#sendTableChat f) {
+        let (id, text, code) = f();
+        let size = Text.size(Text.trim(text, #char ' '));
+        if (Principal.isAnonymous(caller) or size == 0 or size > CHAT_MAX_MESSAGE_LEN or chatRateLimited(caller, now)) { return false };
+        let visible = switch (Map.get(tables, Nat.compare, id)) { case (?t) { canViewTable(t, caller, code) }; case null { false } };
+        visible and (chatPrivileged(caller) or chatSharedCreditNow(now) >= CHAT_SHARED_REFILL_NANOS);
+      };
+      case (#claimPendingPayout _) { Map.containsKey(pendingPayouts, Principal.compare, caller) };
+      case (#clearMyStuckPendingFunds _) {
+        switch (Map.get(pendingFundsSince, Principal.compare, caller)) {
+          case (?since) { now - since >= PENDING_FUNDS_TIMEOUT_NANOS };
+          case null { false };
+        };
+      };
+      // Only when the table really has something due and was not just nudged.
+      case (#triggerDeal f) {
+        let id = f();
+        let recent = switch (Map.get(lastTriggerDealAt, Nat.compare, id)) { case (?at) { now - at < TRIGGER_DEAL_MIN_INTERVAL_NANOS }; case null { false } };
+        not recent and (switch (Map.get(tables, Nat.compare, id)) { case (?t) { tableDue(t, now) }; case null { false } });
+      };
+      // The canister wakes itself; outside help only if its timer is late.
+      case (#tickWork _) {
+        not tickRunning and now - lastTickWorkAt >= TICKWORK_MIN_INTERVAL_NANOS and (switch (nextWakeAt()) { case (?at) { at + 5_000_000_000 <= now }; case null { false } });
+      };
+      case (#executeRakeWithdrawal _) {
+        switch (pendingRakeWithdrawal) { case (?p) { now >= p.readyAt and not rakeWithdrawalsLocked }; case null { false } };
+      };
+      case _ { false };
+    };
+  };
+
+  // Seed known payers with anyone already seated at a real-money table or
+  // owed a payout, so a live player is not treated as a newcomer.
+  var knownPayersSeeded : Bool = false;
+  if (not knownPayersSeeded) {
+    for ((_, t) in Map.entries(tables)) {
+      if (t.buyIn > 0) {
+        for (s in t.seats.vals()) {
+          switch (s.occupant) { case (?p) { Map.add(knownPayers, Principal.compare, p, true) }; case null {} };
+        };
+      };
+    };
+    for ((p, _) in Map.entries(pendingPayouts)) { Map.add(knownPayers, Principal.compare, p, true) };
+    knownPayersSeeded := true;
+  };
+
+  // 2026-11-13, at the dev's request: keep 2 free tables (each one is an
+  // open cycle cost, played by anyone for free) and double the real-money
+  // tables. Free Play 3 and 4 are removed: play money only, so dropping a
+  // seat there loses nothing real. One-time, guarded like the seeds above.
+  var freePlay34Removed : Bool = false;
+  var paidTables2Seeded : Bool = false;
+  if (not freePlay34Removed) {
+    for ((id, t) in Map.toArray(tables).vals()) {
+      if (t.buyIn == 0 and t.kind == #Public and (t.name == "Free Play 3" or t.name == "Free Play 4")) {
+        for (s in t.seats.vals()) {
+          switch (s.occupant) {
+            case (?p) { Map.remove(pendingLeaves, Text.compare, leaveKey(id, p)) };
+            case null {};
+          };
+        };
+        forgetTableState(t);
+        Map.remove(tables, Nat.compare, id);
+      };
+    };
+    freePlay34Removed := true;
+  };
+  if (not paidTables2Seeded) {
+    createPublicTable("Micro 2", 10_000_000_000);
+    createPublicTable("Low 2", 100_000_000_000);
+    createPublicTable("High 2", 1_000_000_000_000);
+    paidTables2Seeded := true;
   };
 }
