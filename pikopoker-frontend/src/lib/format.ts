@@ -50,3 +50,13 @@ export function timeAgo(nanoseconds: bigint): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${Math.floor(diffHours / 24)}d ago`;
 }
+
+// The canister's entry filter turns some calls down before running them: a
+// move out of turn, too many tries in a row, a busy moment. Nothing is
+// charged then, so say that instead of a generic failure.
+export function refusalText(err: unknown): string | null {
+  const text = String((err as { message?: unknown } | null)?.message ?? err);
+  return /inspect_message explicitly refused|Canister rejected the message|IC0406/i.test(text)
+    ? "Not accepted right now (too many attempts, or nothing to do yet). Nothing was charged -- try again in a moment."
+    : null;
+}

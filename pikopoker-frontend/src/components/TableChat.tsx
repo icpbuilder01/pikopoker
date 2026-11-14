@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { getPikopokerActor } from "../lib/actors";
-import { shortPrincipal } from "../lib/format";
+import { shortPrincipal, refusalText } from "../lib/format";
 import { ChatError, type ChatMessage } from "../bindings/pikopoker/pikopoker";
 
 interface TableChatProps {
@@ -110,7 +110,7 @@ export function TableChat({ tableId, identity, myPrincipalText, privateCode }: T
       }
     } catch (err) {
       console.error("sendTableChat failed", err);
-      setError("Message not sent -- try again.");
+      setError(refusalText(err) ?? "Message not sent -- try again.");
     } finally {
       setSending(false);
     }

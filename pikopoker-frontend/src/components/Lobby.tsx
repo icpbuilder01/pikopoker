@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { getPikopokerActor } from "../lib/actors";
 import { frontendUrl } from "../lib/canister-env";
-import { formatPiko, parseAmount } from "../lib/format";
+import { formatPiko, parseAmount, refusalText } from "../lib/format";
 import { CreatePrivateError, Phase, type TableSummary } from "../bindings/pikopoker/pikopoker";
 import { QrCode } from "./QrCode";
 
@@ -145,7 +145,7 @@ export function Lobby({ identity, onLogin, onOpenTable }: LobbyProps) {
       }
     } catch (err) {
       console.error("Create table failed", err);
-      setCreateError("Couldn't create the table -- try again.");
+      setCreateError(refusalText(err) ?? "Couldn't create the table -- try again.");
     } finally {
       setCreating(false);
     }

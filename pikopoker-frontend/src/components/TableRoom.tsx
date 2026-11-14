@@ -3,7 +3,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { getLedgerActor, getPikopokerActor } from "../lib/actors";
 import { pikopokerCanisterId, frontendUrl } from "../lib/canister-env";
-import { formatPiko, parseAmount, shortPrincipal } from "../lib/format";
+import { formatPiko, parseAmount, shortPrincipal, refusalText } from "../lib/format";
 import { compareHandScore, evaluateBest, handLabel, labelForScore } from "../lib/handEval";
 import { PlayingCard } from "./PlayingCard";
 import { SeatCard } from "./SeatCard";
@@ -551,7 +551,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       }
     } catch (err) {
       console.error("Join failed", err);
-      setActionError("Join failed -- try again.");
+      setActionError(refusalText(err) ?? "Join failed -- try again.");
     } finally {
       setJoiningSeat(null);
     }
@@ -586,7 +586,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       }
     } catch (err) {
       console.error("Leave failed", err);
-      setActionError("Leave failed -- try again.");
+      setActionError(refusalText(err) ?? "Leave failed -- try again.");
     } finally {
       setBusy(false);
     }
@@ -606,7 +606,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       }
     } catch (err) {
       console.error("Cancel leave failed", err);
-      setActionError("Couldn't cancel -- try again.");
+      setActionError(refusalText(err) ?? "Couldn't cancel -- try again.");
     } finally {
       setBusy(false);
     }
@@ -625,7 +625,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       }
     } catch (err) {
       console.error("Sit out toggle failed", err);
-      setActionError("Couldn't update sit-out status.");
+      setActionError(refusalText(err) ?? "Couldn't update sit-out status.");
     } finally {
       setBusy(false);
     }
@@ -657,7 +657,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       }
     } catch (err) {
       console.error("Top up failed", err);
-      setActionError("Top up failed -- try again.");
+      setActionError(refusalText(err) ?? "Top up failed -- try again.");
     } finally {
       setBusy(false);
     }
@@ -673,7 +673,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       else await refresh();
     } catch (err) {
       console.error("Fold failed", err);
-      setActionError("Fold failed -- try again.");
+      setActionError(refusalText(err) ?? "Fold failed -- try again.");
     } finally {
       setBusy(false);
     }
@@ -689,7 +689,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       else await refresh();
     } catch (err) {
       console.error("Check/call failed", err);
-      setActionError("Action failed -- try again.");
+      setActionError(refusalText(err) ?? "Action failed -- try again.");
     } finally {
       setBusy(false);
     }
@@ -708,7 +708,7 @@ export function TableRoom({ tableId, identity, privateCode, onBack, onLogin }: T
       else await refresh();
     } catch (err) {
       console.error("Raise failed", err);
-      setActionError("Action failed -- try again.");
+      setActionError(refusalText(err) ?? "Action failed -- try again.");
     } finally {
       setBusy(false);
     }
